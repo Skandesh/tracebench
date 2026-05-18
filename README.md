@@ -2,13 +2,20 @@
 
 > Local-first viewer for AI coding agent sessions.
 
+```bash
+npx tracebench
+```
+
+[![npm](https://img.shields.io/npm/v/tracebench.svg)](https://www.npmjs.com/package/tracebench)
+[![license](https://img.shields.io/npm/l/tracebench.svg)](./LICENSE)
+
 Tracebench reads session logs from supported agent harnesses — **Claude Code, OpenCode, Codex, and Cursor** — and renders them into one unified viewer. The wedge is harness-agnosticism: most people use more than one tool, and existing viewers each tie themselves to one harness.
 
 This is local, no cloud, no telemetry. Apache 2.0.
 
 ![tracebench session viewer](./assets/screenshot.png)
 
-## Status — v0.1.0-alpha
+## Status — v0.1.1
 
 | | What |
 |---|---|
@@ -21,16 +28,17 @@ This is local, no cloud, no telemetry. Apache 2.0.
 | Performance | 44-session Claude Code dir: ~370ms; full mixed index of 320 sessions stays well under acceptance |
 | **Not done** | Plugin loader (adapters still in-tree, registered in `packages/server/src/adapters.ts`), public adapter authoring guide, Windows support, OpenCode/Cursor adapters |
 
-## Quick start
+## Install
 
 ```bash
-pnpm install
-pnpm -r build
-node packages/server/dist/cli.js
-# opens http://127.0.0.1:3478
+npx tracebench
 ```
 
-Flags:
+That's it. Opens at **http://127.0.0.1:3478**.
+
+On first run it indexes everything under `~/.claude/projects` and `~/.codex/sessions`, then keeps an SQLite cache at `~/.tracebench/tracebench.db` so subsequent boots are near-instant.
+
+### Flags
 
 | Flag | Default | Notes |
 |---|---|---|
@@ -42,6 +50,16 @@ Flags:
 | `--no-open` | — | skip browser auto-launch |
 | `--no-index` | — | skip the startup re-index pass |
 | `-v` / `--verbose` | — | verbose stderr logging |
+
+### From source (contributors only)
+
+```bash
+git clone https://github.com/Skandesh/tracebench
+cd tracebench
+pnpm install
+pnpm -r build
+node packages/server/dist/cli.js
+```
 
 ## Architecture
 

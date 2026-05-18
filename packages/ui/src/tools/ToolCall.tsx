@@ -1,7 +1,7 @@
 // Renders a tool_call canonical event plus its matched tool_result.
 // Falls back to a generic JSON view for unknown tools.
 
-import { useState, type ReactNode } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import type { CanonicalEvent } from '../types';
 import { Icons, type IconName } from '../icons';
 import { formatMs } from '../format';
@@ -10,27 +10,30 @@ interface ToolCallProps {
   call: CanonicalEvent;
   result?: CanonicalEvent | undefined;
   defaultOpen?: boolean;
+  highlighted?: boolean;
+  onClearHighlight?: () => void;
 }
 
-export function ToolCallView({ call, result, defaultOpen }: ToolCallProps) {
+export function ToolCallView({ call, result, defaultOpen, highlighted, onClearHighlight }: ToolCallProps) {
   const name = call.tool.name ?? 'tool';
+  const props = { call, result, highlighted, onClearHighlight };
   // Codex aliases — its tool names differ but the renderer can be reused.
   switch (name) {
     case 'Bash':
     case 'exec_command':
-      return <BashTool call={call} result={result} defaultOpen={defaultOpen ?? true} />;
+      return <BashTool {...props} defaultOpen={defaultOpen ?? true} />;
     case 'Read':
     case 'view':
-      return <ReadTool call={call} result={result} defaultOpen={defaultOpen ?? false} />;
+      return <ReadTool {...props} defaultOpen={defaultOpen ?? false} />;
     case 'Edit':
     case 'apply_patch':
-      return <EditTool call={call} result={result} defaultOpen={defaultOpen ?? true} />;
+      return <EditTool {...props} defaultOpen={defaultOpen ?? true} />;
     case 'Write':
-      return <WriteTool call={call} result={result} defaultOpen={defaultOpen ?? false} />;
+      return <WriteTool {...props} defaultOpen={defaultOpen ?? false} />;
     case 'Grep':
-      return <GrepTool call={call} result={result} defaultOpen={defaultOpen ?? false} />;
+      return <GrepTool {...props} defaultOpen={defaultOpen ?? false} />;
     default:
-      return <GenericTool call={call} result={result} defaultOpen={defaultOpen ?? false} />;
+      return <GenericTool {...props} defaultOpen={defaultOpen ?? false} />;
   }
 }
 
@@ -84,7 +87,7 @@ function colorLine(line: string): string {
 
 // ── Bash ──────────────────────────────────────────────────────────────────
 
-function BashTool({ call, result, defaultOpen }: ToolCallProps) {
+function BashTool({ call, result, defaultOpen, highlighted, onClearHighlight }: ToolCallProps) {
   const [open, setOpen] = useState(!!defaultOpen);
   // Claude Code uses `command`; Codex `exec_command` uses `cmd`.
   const input = (call.tool.input ?? {}) as { command?: string; cmd?: string; description?: string };
@@ -93,8 +96,20 @@ function BashTool({ call, result, defaultOpen }: ToolCallProps) {
   const status = toolStatus(result);
   const lines = output.split('\n');
 
+  // Auto-clear highlight after animation
+  useEffect(() => {
+    if (highlighted) {
+      const timer = setTimeout(() => onClearHighlight?.(), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [highlighted, onClearHighlight]);
+
   return (
-    <div className="tb-tool tb-tool-bash" data-status={status}>
+    <div
+      className={`tb-tool tb-tool-bash${highlighted ? ' tb-tool-highlighted' : ''}`}
+      data-status={status}
+      data-event-id={call.event_id}
+    >
       <ToolHead
         tool="Bash"
         iconName="Bash"
@@ -125,7 +140,7 @@ function BashTool({ call, result, defaultOpen }: ToolCallProps) {
 
 // ── Read ──────────────────────────────────────────────────────────────────
 
-function ReadTool({ call, result, defaultOpen }: ToolCallProps) {
+function ReadTool({ call, result, defaultOpen, highlighted, onClearHighlight }: ToolCallProps) {
   const [open, setOpen] = useState(!!defaultOpen);
   const input = (call.tool.input ?? {}) as { file_path?: string; offset?: number; limit?: number };
   const file = input.file_path ?? '';
@@ -137,8 +152,20 @@ function ReadTool({ call, result, defaultOpen }: ToolCallProps) {
         : '';
   const output = outputAsString(result);
   const lineCount = output ? output.split('\n').length : 0;
+
+  // Auto-clear highlight after animation
+  useEffect(() => {
+    if (highlighted) {
+      const timer = setTimeout(() => onClearHighlight?.(), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [highlighted, onClearHighlight]);
+
   return (
-    <div className="tb-tool tb-tool-read">
+    <div
+      className={`tb-tool tb-tool-read${highlighted ? ' tb-tool-highlighted' : ''}`}
+      data-event-id={call.event_id}
+    >
       <ToolHead
         tool="Read"
         iconName="Read"
@@ -159,7 +186,7 @@ function ReadTool({ call, result, defaultOpen }: ToolCallProps) {
 
 // ── Edit ──────────────────────────────────────────────────────────────────
 
-function EditTool({ call, result, defaultOpen }: ToolCallProps) {
+function EditTool({ call, result, defaultOpen, highlighted, onClearHighlight }: ToolCallProps) {
   const [open, setOpen] = useState(!!defaultOpen);
   // Claude Code Edit input: { file_path, old_string, new_string }.
   // Codex apply_patch input: { _raw: patch-string }.
@@ -182,8 +209,20 @@ function EditTool({ call, result, defaultOpen }: ToolCallProps) {
     : (input.old_string ?? '').split('\n').length;
   const oldLines = (input.old_string ?? '').split('\n');
   const newLines = (input.new_string ?? '').split('\n');
+
+  // Auto-clear highlight after animation
+  useEffect(() => {
+    if (highlighted) {
+      const timer = setTimeout(() => onClearHighlight?.(), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [highlighted, onClearHighlight]);
+
   return (
-    <div className="tb-tool tb-tool-edit">
+    <div
+      className={`tb-tool tb-tool-edit${highlighted ? ' tb-tool-highlighted' : ''}`}
+      data-event-id={call.event_id}
+    >
       <ToolHead
         tool={isPatch ? 'apply_patch' : 'Edit'}
         iconName="Edit"
@@ -237,13 +276,25 @@ function EditTool({ call, result, defaultOpen }: ToolCallProps) {
 
 // ── Write ─────────────────────────────────────────────────────────────────
 
-function WriteTool({ call, result, defaultOpen }: ToolCallProps) {
+function WriteTool({ call, result, defaultOpen, highlighted, onClearHighlight }: ToolCallProps) {
   const [open, setOpen] = useState(!!defaultOpen);
   const input = (call.tool.input ?? {}) as { file_path?: string; content?: string };
   const content = input.content ?? '';
   const lineCount = content ? content.split('\n').length : 0;
+
+  // Auto-clear highlight after animation
+  useEffect(() => {
+    if (highlighted) {
+      const timer = setTimeout(() => onClearHighlight?.(), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [highlighted, onClearHighlight]);
+
   return (
-    <div className="tb-tool tb-tool-write">
+    <div
+      className={`tb-tool tb-tool-write${highlighted ? ' tb-tool-highlighted' : ''}`}
+      data-event-id={call.event_id}
+    >
       <ToolHead
         tool="Write"
         iconName="Write"
@@ -264,13 +315,25 @@ function WriteTool({ call, result, defaultOpen }: ToolCallProps) {
 
 // ── Grep ──────────────────────────────────────────────────────────────────
 
-function GrepTool({ call, result, defaultOpen }: ToolCallProps) {
+function GrepTool({ call, result, defaultOpen, highlighted, onClearHighlight }: ToolCallProps) {
   const [open, setOpen] = useState(!!defaultOpen);
   const input = (call.tool.input ?? {}) as { pattern?: string; path?: string; glob?: string };
   const output = outputAsString(result);
   const matchCount = output ? output.split('\n').filter((l) => l.trim()).length : 0;
+
+  // Auto-clear highlight after animation
+  useEffect(() => {
+    if (highlighted) {
+      const timer = setTimeout(() => onClearHighlight?.(), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [highlighted, onClearHighlight]);
+
   return (
-    <div className="tb-tool tb-tool-grep">
+    <div
+      className={`tb-tool tb-tool-grep${highlighted ? ' tb-tool-highlighted' : ''}`}
+      data-event-id={call.event_id}
+    >
       <ToolHead
         tool="Grep"
         iconName="Grep"
@@ -297,11 +360,23 @@ function GrepTool({ call, result, defaultOpen }: ToolCallProps) {
 
 // ── Fallback for unknown tools ────────────────────────────────────────────
 
-function GenericTool({ call, result, defaultOpen }: ToolCallProps) {
+function GenericTool({ call, result, defaultOpen, highlighted, onClearHighlight }: ToolCallProps) {
   const [open, setOpen] = useState(!!defaultOpen);
   const name = call.tool.name ?? 'tool';
+
+  // Auto-clear highlight after animation
+  useEffect(() => {
+    if (highlighted) {
+      const timer = setTimeout(() => onClearHighlight?.(), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [highlighted, onClearHighlight]);
+
   return (
-    <div className="tb-tool tb-tool-generic">
+    <div
+      className={`tb-tool tb-tool-generic${highlighted ? ' tb-tool-highlighted' : ''}`}
+      data-event-id={call.event_id}
+    >
       <ToolHead
         tool={name}
         open={open}

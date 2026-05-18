@@ -476,6 +476,31 @@ kbd {
   font-weight: 500;
 }
 
+/* Clickable error button in session card */
+.tb-sess-err-btn {
+  appearance: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  color: oklch(0.7 0.18 25);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  transition: text-decoration-color 0.15s;
+}
+.tb-sess-err-btn:hover {
+  text-decoration-color: oklch(0.7 0.18 25);
+}
+
+[data-theme="light"] .tb-sess-err-btn {
+  color: oklch(0.5 0.18 25);
+}
+[data-theme="light"] .tb-sess-err-btn:hover {
+  text-decoration-color: oklch(0.5 0.18 25);
+}
+
 /* ── Session header (center pane) ────────────────────────────────────────── */
 
 .tb-pane-center {
@@ -755,6 +780,37 @@ kbd {
   border-radius: 3px;
 }
 
+/* Highlighted tool call (navigated-to error) */
+.tb-tool-highlighted {
+  animation: tb-highlight-pulse 2s ease-out;
+  position: relative;
+}
+
+.tb-tool-highlighted::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border: 2px solid oklch(0.72 0.18 25);
+  border-radius: calc(var(--radius) + 2px);
+  pointer-events: none;
+  animation: tb-highlight-border 2s ease-out;
+}
+
+@keyframes tb-highlight-pulse {
+  0% { box-shadow: 0 0 0 0 oklch(0.72 0.18 25 / 0.4); }
+  20% { box-shadow: 0 0 0 6px oklch(0.72 0.18 25 / 0.3); }
+  100% { box-shadow: 0 0 0 0 oklch(0.72 0.18 25 / 0); }
+}
+
+@keyframes tb-highlight-border {
+  0%, 70% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+[data-theme="light"] .tb-tool-highlighted::before {
+  border-color: oklch(0.55 0.18 25);
+}
+
 .tb-tool-body {
   border-top: 1px solid var(--border-soft);
   background: var(--bg);
@@ -867,6 +923,30 @@ kbd {
   width: 6px; height: 6px;
   border-radius: 50%;
   background: var(--accent);
+}
+
+/* Clickable error button at timeline end */
+.tb-timeline-end-err {
+  appearance: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  color: oklch(0.72 0.16 25);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  transition: text-decoration-color 0.15s;
+}
+.tb-timeline-end-err:hover {
+  text-decoration-color: oklch(0.72 0.16 25);
+}
+
+[data-theme="light"] .tb-timeline-end-err {
+  color: oklch(0.5 0.16 25);
+}
+[data-theme="light"] .tb-timeline-end-err:hover {
+  text-decoration-color: oklch(0.5 0.16 25);
 }
 
 /* ── Analytics rail ──────────────────────────────────────────────────────── */

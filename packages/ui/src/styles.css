@@ -105,7 +105,7 @@ html, body {
 
 .tb-cols {
   display: grid;
-  grid-template-columns: 268px 1fr 320px;
+  grid-template-columns: 280px minmax(0, 1fr) 340px;
   min-height: 0;
 }
 
@@ -113,7 +113,7 @@ html, body {
 
 .tb-top {
   display: grid;
-  grid-template-columns: 268px 1fr auto;
+  grid-template-columns: 280px minmax(0, 1fr) auto;
   align-items: center;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
@@ -445,10 +445,12 @@ kbd {
 .tb-sess-stats {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 5px;
   font-family: 'Geist Mono', monospace;
   font-size: 10.5px;
   color: var(--text-faint);
+  min-width: 0;
 }
 .tb-sess-dot {
   width: 2px;
@@ -457,9 +459,9 @@ kbd {
   background: var(--text-faint);
 }
 .tb-sess-flag {
-  position: absolute;
-  top: 8px;
-  right: 10px;
+  /* legacy class — still defined for any existing markup, but no longer
+     absolute-positioned (it used to overlap .tb-sess-time). The error count
+     is now rendered inline via .tb-sess-err. */
   font-family: 'Geist Mono', monospace;
   font-size: 9.5px;
   color: oklch(0.72 0.18 25);
@@ -467,6 +469,11 @@ kbd {
   padding: 1px 5px;
   border-radius: 3px;
   letter-spacing: 0.02em;
+}
+
+.tb-sess-err {
+  color: oklch(0.7 0.18 25);
+  font-weight: 500;
 }
 
 /* ── Session header (center pane) ────────────────────────────────────────── */

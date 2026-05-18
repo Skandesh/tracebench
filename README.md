@@ -6,6 +6,8 @@ Tracebench reads session logs from supported agent harnesses — **Claude Code, 
 
 This is local, no cloud, no telemetry. Apache 2.0.
 
+![tracebench session viewer](./assets/screenshot.png)
+
 ## Status — v0.1.0-alpha
 
 | | What |

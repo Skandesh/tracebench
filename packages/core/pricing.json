@@ -1,8 +1,9 @@
 {
   "_meta": {
-    "source": "LiteLLM model_prices_and_context_window.json (subset)",
+    "source": "BerriAI/litellm — community-maintained pricing JSON (the same file ccusage uses). Not the LiteLLM router library.",
+    "source_url": "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json",
     "fetched_at": "2026-05-18",
-    "notes": "Vendored subset covering Anthropic models used by Claude Code in v0.1. Prices are USD per token. Refresh via scripts/refresh-pricing (not yet implemented)."
+    "notes": "Prices are USD per token. OpenAI models don't bill separately for cache creation upstream, so that field is 0 for them."
   },
   "models": {
     "claude-sonnet-4-5": {
@@ -17,34 +18,48 @@
       "output_per_token": 0.000015,
       "cache_read_per_token": 0.0000003,
       "cache_creation_per_token": 0.00000375,
-      "max_input_tokens": 200000
+      "max_input_tokens": 1000000
     },
     "claude-opus-4-5": {
-      "input_per_token": 0.000015,
-      "output_per_token": 0.000075,
-      "cache_read_per_token": 0.0000015,
-      "cache_creation_per_token": 0.00001875,
+      "input_per_token": 0.000005,
+      "output_per_token": 0.000025,
+      "cache_read_per_token": 0.0000005,
+      "cache_creation_per_token": 0.00000625,
       "max_input_tokens": 200000
     },
     "claude-opus-4-6": {
+      "input_per_token": 0.000005,
+      "output_per_token": 0.000025,
+      "cache_read_per_token": 0.0000005,
+      "cache_creation_per_token": 0.00000625,
+      "max_input_tokens": 1000000
+    },
+    "claude-opus-4-7": {
+      "input_per_token": 0.000005,
+      "output_per_token": 0.000025,
+      "cache_read_per_token": 0.0000005,
+      "cache_creation_per_token": 0.00000625,
+      "max_input_tokens": 1000000
+    },
+    "claude-opus-4-1": {
       "input_per_token": 0.000015,
       "output_per_token": 0.000075,
       "cache_read_per_token": 0.0000015,
       "cache_creation_per_token": 0.00001875,
       "max_input_tokens": 200000
-    },
-    "claude-opus-4-7": {
-      "input_per_token": 0.000015,
-      "output_per_token": 0.000075,
-      "cache_read_per_token": 0.0000015,
-      "cache_creation_per_token": 0.00001875,
-      "max_input_tokens": 1000000
     },
     "claude-haiku-4-5": {
       "input_per_token": 0.000001,
       "output_per_token": 0.000005,
       "cache_read_per_token": 0.0000001,
       "cache_creation_per_token": 0.00000125,
+      "max_input_tokens": 200000
+    },
+    "claude-3-7-sonnet-20250219": {
+      "input_per_token": 0.000003,
+      "output_per_token": 0.000015,
+      "cache_read_per_token": 0.0000003,
+      "cache_creation_per_token": 0.00000375,
       "max_input_tokens": 200000
     },
     "claude-3-5-sonnet-20241022": {
@@ -66,50 +81,155 @@
       "output_per_token": 0.00001,
       "cache_read_per_token": 0.000000125,
       "cache_creation_per_token": 0,
-      "max_input_tokens": 256000
+      "max_input_tokens": 272000
     },
     "gpt-5-codex": {
       "input_per_token": 0.00000125,
       "output_per_token": 0.00001,
       "cache_read_per_token": 0.000000125,
       "cache_creation_per_token": 0,
-      "max_input_tokens": 256000
+      "max_input_tokens": 272000
+    },
+    "gpt-5-mini": {
+      "input_per_token": 0.00000025,
+      "output_per_token": 0.000002,
+      "cache_read_per_token": 0.000000025,
+      "cache_creation_per_token": 0,
+      "max_input_tokens": 272000
+    },
+    "gpt-5-nano": {
+      "input_per_token": 0.00000005,
+      "output_per_token": 0.0000004,
+      "cache_read_per_token": 0.000000005,
+      "cache_creation_per_token": 0,
+      "max_input_tokens": 272000
+    },
+    "gpt-5-pro": {
+      "input_per_token": 0.000015,
+      "output_per_token": 0.00012,
+      "cache_read_per_token": 0,
+      "cache_creation_per_token": 0,
+      "max_input_tokens": 128000
+    },
+    "gpt-5.1": {
+      "input_per_token": 0.00000125,
+      "output_per_token": 0.00001,
+      "cache_read_per_token": 0.000000125,
+      "cache_creation_per_token": 0,
+      "max_input_tokens": 272000
+    },
+    "gpt-5.1-codex": {
+      "input_per_token": 0.00000125,
+      "output_per_token": 0.00001,
+      "cache_read_per_token": 0.000000125,
+      "cache_creation_per_token": 0,
+      "max_input_tokens": 272000
+    },
+    "gpt-5.1-codex-max": {
+      "input_per_token": 0.00000125,
+      "output_per_token": 0.00001,
+      "cache_read_per_token": 0.000000125,
+      "cache_creation_per_token": 0,
+      "max_input_tokens": 272000
+    },
+    "gpt-5.1-codex-mini": {
+      "input_per_token": 0.00000025,
+      "output_per_token": 0.000002,
+      "cache_read_per_token": 0.000000025,
+      "cache_creation_per_token": 0,
+      "max_input_tokens": 272000
+    },
+    "gpt-5.2": {
+      "input_per_token": 0.00000175,
+      "output_per_token": 0.000014,
+      "cache_read_per_token": 0.000000175,
+      "cache_creation_per_token": 0,
+      "max_input_tokens": 272000
+    },
+    "gpt-5.2-codex": {
+      "input_per_token": 0.00000175,
+      "output_per_token": 0.000014,
+      "cache_read_per_token": 0.000000175,
+      "cache_creation_per_token": 0,
+      "max_input_tokens": 272000
+    },
+    "gpt-5.2-pro": {
+      "input_per_token": 0.000021,
+      "output_per_token": 0.000168,
+      "cache_read_per_token": 0,
+      "cache_creation_per_token": 0,
+      "max_input_tokens": 272000
     },
     "gpt-5.3-codex": {
-      "input_per_token": 0.000002,
-      "output_per_token": 0.000012,
-      "cache_read_per_token": 0.0000002,
+      "input_per_token": 0.00000175,
+      "output_per_token": 0.000014,
+      "cache_read_per_token": 0.000000175,
       "cache_creation_per_token": 0,
-      "max_input_tokens": 258400
+      "max_input_tokens": 272000
     },
-    "gpt-5.3": {
-      "input_per_token": 0.000002,
-      "output_per_token": 0.000012,
-      "cache_read_per_token": 0.0000002,
+    "gpt-5.4": {
+      "input_per_token": 0.0000025,
+      "output_per_token": 0.000015,
+      "cache_read_per_token": 0.00000025,
       "cache_creation_per_token": 0,
-      "max_input_tokens": 258400
+      "max_input_tokens": 1050000
+    },
+    "gpt-5.4-mini": {
+      "input_per_token": 0.00000075,
+      "output_per_token": 0.0000045,
+      "cache_read_per_token": 0.000000075,
+      "cache_creation_per_token": 0,
+      "max_input_tokens": 272000
+    },
+    "gpt-5.4-nano": {
+      "input_per_token": 0.00000005,
+      "output_per_token": 0.0000004,
+      "cache_read_per_token": 0.000000005,
+      "cache_creation_per_token": 0,
+      "max_input_tokens": 272000
+    },
+    "gpt-5.4-pro": {
+      "input_per_token": 0.00003,
+      "output_per_token": 0.00018,
+      "cache_read_per_token": 0.000003,
+      "cache_creation_per_token": 0,
+      "max_input_tokens": 1050000
     },
     "gpt-5.5": {
-      "input_per_token": 0.0000025,
-      "output_per_token": 0.000015,
-      "cache_read_per_token": 0.00000025,
+      "input_per_token": 0.000005,
+      "output_per_token": 0.00003,
+      "cache_read_per_token": 0.0000005,
       "cache_creation_per_token": 0,
-      "max_input_tokens": 320000
+      "max_input_tokens": 1050000
     },
-    "gpt-5.5-codex": {
-      "input_per_token": 0.0000025,
-      "output_per_token": 0.000015,
-      "cache_read_per_token": 0.00000025,
+    "gpt-5.5-pro": {
+      "input_per_token": 0.00003,
+      "output_per_token": 0.00018,
+      "cache_read_per_token": 0.000003,
       "cache_creation_per_token": 0,
-      "max_input_tokens": 320000
+      "max_input_tokens": 1050000
     }
   },
   "aliases": {
     "claude-sonnet-4-5-20250929": "claude-sonnet-4-5",
     "claude-sonnet-4-6-20251015": "claude-sonnet-4-6",
-    "claude-opus-4-5-20250901": "claude-opus-4-5",
-    "claude-opus-4-6-20251020": "claude-opus-4-6",
-    "claude-opus-4-7-20260101": "claude-opus-4-7",
-    "claude-haiku-4-5-20251001": "claude-haiku-4-5"
+    "claude-opus-4-5-20251101": "claude-opus-4-5",
+    "claude-opus-4-6-20260205": "claude-opus-4-6",
+    "claude-opus-4-7-20260416": "claude-opus-4-7",
+    "claude-opus-4-1-20250805": "claude-opus-4-1",
+    "claude-haiku-4-5-20251001": "claude-haiku-4-5",
+    "gpt-5-2025-08-07": "gpt-5",
+    "gpt-5-mini-2025-08-07": "gpt-5-mini",
+    "gpt-5-nano-2025-08-07": "gpt-5-nano",
+    "gpt-5-pro-2025-10-06": "gpt-5-pro",
+    "gpt-5.1-2025-11-13": "gpt-5.1",
+    "gpt-5.2-2025-12-11": "gpt-5.2",
+    "gpt-5.2-pro-2025-12-11": "gpt-5.2-pro",
+    "gpt-5.4-2026-03-05": "gpt-5.4",
+    "gpt-5.4-mini-2026-03-17": "gpt-5.4-mini",
+    "gpt-5.4-nano-2026-03-17": "gpt-5.4-nano",
+    "gpt-5.4-pro-2026-03-05": "gpt-5.4-pro",
+    "gpt-5.5-2026-04-23": "gpt-5.5",
+    "gpt-5.5-pro-2026-04-23": "gpt-5.5-pro"
   }
 }

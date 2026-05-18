@@ -103,11 +103,12 @@ describe('fixture 02 — reasoning + apply_patch', () => {
     const withTokens = events.find((e) => e.tokens.input != null);
     expect(withTokens).toBeDefined();
     expect(withTokens!.tokens.reasoning).toBe(600);
-    // gpt-5.3-codex: in 2e-6, out 12e-6, cache 0.2e-6
-    // (2200-1800)*2e-6 ... actually input is total 2200; output 140+600=740
+    // gpt-5.3-codex (LiteLLM 2026-05): in 1.75e-6, out 1.4e-5, cache_read 1.75e-7
     // We pass tokens.input=2200, cache_read=1800; we don't auto-subtract.
-    // cost = 2200*2e-6 + 740*12e-6 + 1800*0.2e-6 = 0.0044 + 0.00888 + 0.00036 = 0.01364
-    expect(withTokens!.cost_usd!).toBeCloseTo(0.01364, 4);
+    // Reasoning is billed as output (740 = 140 + 600).
+    // cost = 2200*1.75e-6 + 740*1.4e-5 + 1800*1.75e-7
+    //      = 0.00385 + 0.01036 + 0.000315 = 0.014525
+    expect(withTokens!.cost_usd!).toBeCloseTo(0.014525, 5);
   });
 });
 

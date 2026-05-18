@@ -97,11 +97,14 @@ function SessionCard({
           <span>{session.aggregates.tool_call_count} calls</span>
           <span className="tb-sess-dot" />
           <span>{formatCost(session.aggregates.total_cost_usd)}</span>
+          {session.aggregates.tool_error_count > 0 && (
+            <>
+              <span className="tb-sess-dot" />
+              <span className="tb-sess-err">{session.aggregates.tool_error_count} err</span>
+            </>
+          )}
         </span>
       </div>
-      {session.aggregates.tool_error_count > 0 && (
-        <span className="tb-sess-flag">{session.aggregates.tool_error_count} errors</span>
-      )}
     </button>
   );
 }

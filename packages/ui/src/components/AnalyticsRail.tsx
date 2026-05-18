@@ -3,6 +3,12 @@ import type { Session, ToolCount, Turn } from '../types';
 import { Icons } from '../icons';
 import { formatCost, formatDuration } from '../format';
 
+function formatTokensPerRequest(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
+  return Math.round(value).toLocaleString();
+}
+
 interface Props {
   session: Session;
   toolCounts: ToolCount[];
@@ -81,6 +87,18 @@ export function AnalyticsRail({ session, toolCounts, turns }: Props) {
         <div className="tb-stat-row">
           <Stat label="Tool calls" value={agg.tool_call_count} sub={`${agg.message_count} msgs`} />
           <Stat label="Cache" value={`${cacheHitPct}%`} sub="of all tokens" />
+        </div>
+        <div className="tb-stat-row">
+          <Stat
+            label="Tokens/request"
+            value={agg.turn_count > 0 ? formatTokensPerRequest((agg.total_input_tokens + agg.total_output_tokens) / agg.turn_count) : '—'}
+            sub="avg per turn"
+          />
+          <Stat
+            label="Tokens/tool"
+            value={agg.tool_call_count > 0 ? formatTokensPerRequest((agg.total_input_tokens + agg.total_output_tokens) / agg.tool_call_count) : '—'}
+            sub="avg per call"
+          />
         </div>
       </div>
 

@@ -1,13 +1,7 @@
 import { useMemo } from 'react';
 import type { Session, ToolCount, Turn } from '../types';
 import { Icons } from '../icons';
-import { formatCost, formatDuration } from '../format';
-
-function formatTokensPerRequest(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
-  return Math.round(value).toLocaleString();
-}
+import { formatCost, formatDuration, formatTokensCompact } from '../format';
 
 interface Props {
   session: Session;
@@ -98,12 +92,12 @@ export function AnalyticsRail({ session, toolCounts, turns }: Props) {
               them would make the per-turn average look 10× too small. */}
           <Stat
             label="Tokens/turn"
-            value={agg.turn_count > 0 ? formatTokensPerRequest(totalBilledTokens / agg.turn_count) : '—'}
+            value={agg.turn_count > 0 ? formatTokensCompact(totalBilledTokens / agg.turn_count) : '—'}
             sub="avg incl. cache"
           />
           <Stat
             label="Tokens/tool"
-            value={agg.tool_call_count > 0 ? formatTokensPerRequest(totalBilledTokens / agg.tool_call_count) : '—'}
+            value={agg.tool_call_count > 0 ? formatTokensCompact(totalBilledTokens / agg.tool_call_count) : '—'}
             sub="avg incl. cache"
           />
         </div>

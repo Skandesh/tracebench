@@ -1,7 +1,8 @@
 // Renders a tool_call canonical event plus its matched tool_result.
 // Falls back to a generic JSON view for unknown tools.
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
+import { useDisclosure } from '../hooks/useDisclosure';
 import type { CanonicalEvent } from '../types';
 import { Icons, type IconName } from '../icons';
 import { formatMs } from '../format';
@@ -135,7 +136,7 @@ function colorLine(line: string): string {
 // ── Bash ──────────────────────────────────────────────────────────────────
 
 function BashTool({ call, result, defaultOpen, highlighted, onClearHighlight }: ToolCallProps) {
-  const [open, setOpen] = useState(!!defaultOpen);
+  const { open, toggle } = useDisclosure(defaultOpen);
   // Claude Code uses `command`; Codex `exec_command` uses `cmd`.
   const input = (call.tool.input ?? {}) as { command?: string; cmd?: string; description?: string };
   const command = input.command ?? input.cmd ?? '';
@@ -155,7 +156,7 @@ function BashTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
         tool="Bash"
         iconName="Bash"
         open={open}
-        onToggle={() => setOpen(!open)}
+        onToggle={toggle}
         summary={<span className="tb-tool-summary-text">{command}</span>}
         ms={result?.duration_ms ?? null}
         status={status}
@@ -182,7 +183,7 @@ function BashTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
 // ── Read ──────────────────────────────────────────────────────────────────
 
 function ReadTool({ call, result, defaultOpen, highlighted, onClearHighlight }: ToolCallProps) {
-  const [open, setOpen] = useState(!!defaultOpen);
+  const { open, toggle } = useDisclosure(defaultOpen);
   const input = (call.tool.input ?? {}) as { file_path?: string; offset?: number; limit?: number };
   const file = input.file_path ?? '';
   const range =
@@ -205,7 +206,7 @@ function ReadTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
         tool="Read"
         iconName="Read"
         open={open}
-        onToggle={() => setOpen(!open)}
+        onToggle={toggle}
         summary={<><span className="tb-path">{file}</span>{range && <span className="tb-range">{range}</span>}</>}
         kids={lineCount ? `${lineCount} lines` : undefined}
         status={toolStatus(result)}
@@ -222,7 +223,7 @@ function ReadTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
 // ── Edit ──────────────────────────────────────────────────────────────────
 
 function EditTool({ call, result, defaultOpen, highlighted, onClearHighlight }: ToolCallProps) {
-  const [open, setOpen] = useState(!!defaultOpen);
+  const { open, toggle } = useDisclosure(defaultOpen);
   // Claude Code Edit input: { file_path, old_string, new_string }.
   // Codex apply_patch input: { _raw: patch-string }.
   const input = (call.tool.input ?? {}) as {
@@ -256,7 +257,7 @@ function EditTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
         tool={isPatch ? 'apply_patch' : 'Edit'}
         iconName="Edit"
         open={open}
-        onToggle={() => setOpen(!open)}
+        onToggle={toggle}
         summary={<span className="tb-path">{patchFile}</span>}
         kids={<><span className="tb-add">+{adds}</span> <span className="tb-del">-{dels}</span></>}
         status={toolStatus(result)}
@@ -306,7 +307,7 @@ function EditTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
 // ── Write ─────────────────────────────────────────────────────────────────
 
 function WriteTool({ call, result, defaultOpen, highlighted, onClearHighlight }: ToolCallProps) {
-  const [open, setOpen] = useState(!!defaultOpen);
+  const { open, toggle } = useDisclosure(defaultOpen);
   const input = (call.tool.input ?? {}) as { file_path?: string; content?: string };
   const content = input.content ?? '';
   const lineCount = content ? content.split('\n').length : 0;
@@ -322,7 +323,7 @@ function WriteTool({ call, result, defaultOpen, highlighted, onClearHighlight }:
         tool="Write"
         iconName="Write"
         open={open}
-        onToggle={() => setOpen(!open)}
+        onToggle={toggle}
         summary={<span className="tb-path">{input.file_path ?? ''}</span>}
         kids={lineCount ? <span className="tb-add">+{lineCount}</span> : undefined}
         status={toolStatus(result)}
@@ -339,7 +340,7 @@ function WriteTool({ call, result, defaultOpen, highlighted, onClearHighlight }:
 // ── Grep ──────────────────────────────────────────────────────────────────
 
 function GrepTool({ call, result, defaultOpen, highlighted, onClearHighlight }: ToolCallProps) {
-  const [open, setOpen] = useState(!!defaultOpen);
+  const { open, toggle } = useDisclosure(defaultOpen);
   const input = (call.tool.input ?? {}) as { pattern?: string; path?: string; glob?: string };
   const output = outputAsString(result);
   const matchCount = output ? output.split('\n').filter((l) => l.trim()).length : 0;
@@ -355,7 +356,7 @@ function GrepTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
         tool="Grep"
         iconName="Grep"
         open={open}
-        onToggle={() => setOpen(!open)}
+        onToggle={toggle}
         summary={
           <>
             <span className="tb-quoted">&quot;{input.pattern ?? ''}&quot;</span>
@@ -378,7 +379,7 @@ function GrepTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
 // ── Fallback for unknown tools ────────────────────────────────────────────
 
 function GenericTool({ call, result, defaultOpen, highlighted, onClearHighlight }: ToolCallProps) {
-  const [open, setOpen] = useState(!!defaultOpen);
+  const { open, toggle } = useDisclosure(defaultOpen);
   const name = call.tool.name ?? 'tool';
 
   return (
@@ -391,7 +392,7 @@ function GenericTool({ call, result, defaultOpen, highlighted, onClearHighlight 
       <ToolHead
         tool={name}
         open={open}
-        onToggle={() => setOpen(!open)}
+        onToggle={toggle}
         summary={<span className="tb-mute">{Object.keys(call.tool.input ?? {}).join(', ') || '—'}</span>}
         status={toolStatus(result)}
       />

@@ -2,6 +2,7 @@ import { useMemo, type Ref } from 'react';
 import type { Session, Turn, CanonicalEvent } from '../types';
 import { Icons } from '../icons';
 import { formatCost, formatDuration, localTime } from '../format';
+import { indexToolResultsByCall } from '../selectors';
 import { ToolCallView } from '../tools/ToolCall';
 
 interface Props {
@@ -170,13 +171,7 @@ function TurnGroup({
   highlightedEventId?: string | null;
   onClearHighlight?: () => void;
 }) {
-  // Build a map of tool_call event_id → tool_result event for pairing
-  const resultByCallId = new Map<string, CanonicalEvent>();
-  for (const e of turn.events) {
-    if (e.event_type === 'tool_result' && e.parent_event_id) {
-      resultByCallId.set(e.parent_event_id, e);
-    }
-  }
+  const resultByCallId = useMemo(() => indexToolResultsByCall(turn.events), [turn.events]);
 
   return (
     <div className="tb-turn-group">

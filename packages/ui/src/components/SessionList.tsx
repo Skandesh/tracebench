@@ -1,6 +1,34 @@
+import { useMemo } from 'react';
 import type { Session, Harness } from '../types';
 import { Icons } from '../icons';
 import { formatCost, formatDuration, projectName, localTime } from '../format';
+
+interface ProjectSummary {
+  name: string;
+  count: number;
+  lastActive: string;
+}
+
+/** Pure aggregation — extracted so it's testable and only runs when sessions change. */
+function summarizeProjects(sessions: readonly Session[]): ProjectSummary[] {
+  const byProject = new Map<string, { count: number; latest: string }>();
+  for (const s of sessions) {
+    const name = projectName(s.project_path);
+    const prev = byProject.get(name);
+    if (!prev) {
+      byProject.set(name, { count: 1, latest: s.started_at });
+    } else {
+      prev.count++;
+      if (s.started_at > prev.latest) prev.latest = s.started_at;
+    }
+  }
+  const out: ProjectSummary[] = [];
+  for (const [name, info] of byProject) {
+    out.push({ name, count: info.count, lastActive: info.latest });
+  }
+  out.sort((a, b) => b.lastActive.localeCompare(a.lastActive));
+  return out;
+}
 
 interface Props {
   sessions: Session[];
@@ -23,21 +51,7 @@ const HARNESS_COLOR: Record<Harness, string> = {
 };
 
 export function SessionList({ sessions, activeId, setActiveId, onErrorClick }: Props) {
-  // Group projects for the header by last-active.
-  const projects: { name: string; count: number; lastActive: string }[] = [];
-  const byProject = new Map<string, { count: number; latest: string }>();
-  for (const s of sessions) {
-    const name = projectName(s.project_path);
-    const prev = byProject.get(name);
-    if (!prev) {
-      byProject.set(name, { count: 1, latest: s.started_at });
-    } else {
-      prev.count++;
-      if (s.started_at > prev.latest) prev.latest = s.started_at;
-    }
-  }
-  for (const [name, info] of byProject) projects.push({ name, count: info.count, lastActive: info.latest });
-  projects.sort((a, b) => b.lastActive.localeCompare(a.lastActive));
+  const projects = useMemo(() => summarizeProjects(sessions), [sessions]);
 
   return (
     <aside className="tb-pane tb-pane-left">

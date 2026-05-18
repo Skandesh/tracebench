@@ -22,6 +22,13 @@ export function formatNum(n: number | null | undefined): string {
   return n.toLocaleString();
 }
 
+/** Compact token count: 1_500 → "1.5k", 2_350_000 → "2.4M". */
+export function formatTokensCompact(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
+  return Math.round(value).toLocaleString();
+}
+
 export function formatCost(usd: number | null | undefined): string {
   if (usd == null) return '$0.00';
   if (usd >= 100) return '$' + usd.toFixed(0);

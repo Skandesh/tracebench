@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Harness, Session, ToolCount, Turn } from './types';
 import { listSessions, getSession, getSessionTurns } from './api';
+import { useErrorNavigation } from './hooks/useErrorNavigation';
 import { TopBar } from './components/TopBar';
 import { SessionList } from './components/SessionList';
 import { Timeline } from './components/Timeline';
@@ -21,68 +22,10 @@ export function App() {
   const [filterHarness, setFilterHarness] = useState<Harness | 'all'>('all');
   const [filterTool, setFilterTool] = useState<string | null>(null);
 
-  // Error navigation state
-  const [activeErrorIndex, setActiveErrorIndex] = useState<number | null>(null);
-  const timelineRef = useRef<HTMLDivElement | null>(null);
-
-  // Computed list of event IDs with errors. Two-pass per turn (index
-  // tool_results by parent first, then walk tool_calls) so total work is
-  // O(events) not O(events²).
-  const errorEventIds = useMemo(() => {
-    const ids: string[] = [];
-    for (const turn of turns) {
-      const resultByCallId = new Map<string, (typeof turn.events)[number]>();
-      for (const e of turn.events) {
-        if (e.event_type === 'tool_result' && e.parent_event_id) {
-          resultByCallId.set(e.parent_event_id, e);
-        }
-      }
-      for (const e of turn.events) {
-        if (
-          e.event_type === 'tool_call' &&
-          resultByCallId.get(e.event_id)?.tool.status === 'error'
-        ) {
-          ids.push(e.event_id);
-        }
-      }
-    }
-    return ids;
-  }, [turns]);
-
-  // Handler to navigate to next error (cycles through all errors)
-  const navigateToNextError = useCallback(() => {
-    if (errorEventIds.length === 0) return;
-    setActiveErrorIndex((prev) =>
-      prev === null ? 0 : (prev + 1) % errorEventIds.length
-    );
-  }, [errorEventIds]);
-
-  // Handler to navigate to first error
-  const navigateToFirstError = useCallback(() => {
-    if (errorEventIds.length === 0) return;
-    setActiveErrorIndex(0);
-  }, [errorEventIds]);
-
-  // Clear highlight handler
-  const clearErrorHighlight = useCallback(() => {
-    setActiveErrorIndex(null);
-  }, []);
-
-  // "Click N err on any session card" intent. If it's the active session we
-  // can navigate immediately; otherwise switch sessions first and queue the
-  // navigation until turns finish loading (consumed below).
-  const [pendingErrorNavSession, setPendingErrorNavSession] = useState<string | null>(null);
-  const handleSessionErrorClick = useCallback(
-    (sessionId: string) => {
-      if (sessionId === activeId) {
-        navigateToFirstError();
-        return;
-      }
-      setActiveId(sessionId);
-      setPendingErrorNavSession(sessionId);
-    },
-    [activeId, navigateToFirstError],
-  );
+  // All error-navigation mechanics — finding errored tool_calls, cycling the
+  // active one, scrolling to it, and resolving the cross-session "switch +
+  // jump" intent — live in this hook. App just decides when to invoke it.
+  const errNav = useErrorNavigation({ turns, activeId, detailLoading, setActiveId });
 
   const refresh = useCallback(async () => {
     setSessionsLoading(true);
@@ -116,7 +59,6 @@ export function App() {
     }
     let cancelled = false;
     setDetailLoading(true);
-    setActiveErrorIndex(null); // Reset error navigation on session change
     Promise.all([getSession(activeId), getSessionTurns(activeId)])
       .then(([detail, t]) => {
         if (cancelled) return;
@@ -134,43 +76,6 @@ export function App() {
       });
     return () => { cancelled = true; };
   }, [activeId]);
-
-  // Consume pending "switch + jump" intent once turns load for the queued session.
-  useEffect(() => {
-    if (!pendingErrorNavSession) return;
-    if (pendingErrorNavSession !== activeId) return;
-    if (detailLoading) return;
-    if (errorEventIds.length === 0) {
-      // Session has no errors after all — drop the intent.
-      setPendingErrorNavSession(null);
-      return;
-    }
-    setActiveErrorIndex(0);
-    setPendingErrorNavSession(null);
-  }, [pendingErrorNavSession, activeId, detailLoading, errorEventIds]);
-
-  // Scroll to active error when index changes. The target element may not
-  // exist on the first paint after a session switch — retry on the next frame
-  // until it does or we give up.
-  useEffect(() => {
-    if (activeErrorIndex === null || errorEventIds.length === 0) return;
-    const targetEventId = errorEventIds[activeErrorIndex];
-    let cancelled = false;
-    let attempts = 0;
-    const tryScroll = () => {
-      if (cancelled) return;
-      const el = timelineRef.current?.querySelector(
-        `[data-event-id="${targetEventId}"]`,
-      ) as HTMLElement | null;
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        return;
-      }
-      if (attempts++ < 10) requestAnimationFrame(tryScroll);
-    };
-    requestAnimationFrame(tryScroll);
-    return () => { cancelled = true; };
-  }, [activeErrorIndex, errorEventIds]);
 
   // Keyboard nav: j/k navigate sessions, / focuses search, Esc blurs input
   useEffect(() => {
@@ -211,7 +116,7 @@ export function App() {
           sessions={filteredSessions}
           activeId={activeId}
           setActiveId={setActiveId}
-          onErrorClick={handleSessionErrorClick}
+          onErrorClick={errNav.navigateForSession}
         />
         {sessionsError ? (
           <section className="tb-pane tb-pane-center"><div className="tb-empty">Error: {sessionsError}</div></section>
@@ -222,11 +127,11 @@ export function App() {
             loading={detailLoading}
             filterTool={filterTool}
             setFilterTool={setFilterTool}
-            timelineRef={timelineRef}
-            errorEventIds={errorEventIds}
-            activeErrorIndex={activeErrorIndex}
-            onErrorClick={navigateToNextError}
-            onClearErrorHighlight={clearErrorHighlight}
+            timelineRef={errNav.timelineRef}
+            errorEventIds={errNav.errorEventIds}
+            activeErrorIndex={errNav.activeErrorIndex}
+            onErrorClick={errNav.navigateNext}
+            onClearErrorHighlight={errNav.clearHighlight}
           />
         ) : sessionsLoading ? (
           <section className="tb-pane tb-pane-center"><div className="tb-empty">Loading…</div></section>

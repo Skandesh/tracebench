@@ -44,8 +44,12 @@ export function AnalyticsRail({ session, toolCounts, turns }: Props) {
   const peakPct = Math.min(100, (peak / ctxMax) * 100);
 
   const totalIO = (agg.total_input_tokens + agg.total_output_tokens) || 1;
-  const totalAll =
-    (agg.total_input_tokens + agg.total_output_tokens + agg.total_cache_read_tokens + agg.total_cache_creation_tokens) || 1;
+  const totalBilledTokens =
+    agg.total_input_tokens +
+    agg.total_output_tokens +
+    agg.total_cache_read_tokens +
+    agg.total_cache_creation_tokens;
+  const totalAll = totalBilledTokens || 1;
 
   const cacheHitPct = ((agg.total_cache_read_tokens / totalAll) * 100).toFixed(0);
 
@@ -89,15 +93,18 @@ export function AnalyticsRail({ session, toolCounts, turns }: Props) {
           <Stat label="Cache" value={`${cacheHitPct}%`} sub="of all tokens" />
         </div>
         <div className="tb-stat-row">
+          {/* Use the total tokens billed against the session — including cache
+              reads, which on Claude Code are typically 90% of input. Excluding
+              them would make the per-turn average look 10× too small. */}
           <Stat
-            label="Tokens/request"
-            value={agg.turn_count > 0 ? formatTokensPerRequest((agg.total_input_tokens + agg.total_output_tokens) / agg.turn_count) : '—'}
-            sub="avg per turn"
+            label="Tokens/turn"
+            value={agg.turn_count > 0 ? formatTokensPerRequest(totalBilledTokens / agg.turn_count) : '—'}
+            sub="avg incl. cache"
           />
           <Stat
             label="Tokens/tool"
-            value={agg.tool_call_count > 0 ? formatTokensPerRequest((agg.total_input_tokens + agg.total_output_tokens) / agg.tool_call_count) : '—'}
-            sub="avg per call"
+            value={agg.tool_call_count > 0 ? formatTokensPerRequest(totalBilledTokens / agg.tool_call_count) : '—'}
+            sub="avg incl. cache"
           />
         </div>
       </div>

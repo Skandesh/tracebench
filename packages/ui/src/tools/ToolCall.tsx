@@ -1,7 +1,7 @@
 // Renders a tool_call canonical event plus its matched tool_result.
 // Falls back to a generic JSON view for unknown tools.
 
-import { useState, useEffect, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { CanonicalEvent } from '../types';
 import { Icons, type IconName } from '../icons';
 import { formatMs } from '../format';
@@ -12,6 +12,53 @@ interface ToolCallProps {
   defaultOpen?: boolean;
   highlighted?: boolean;
   onClearHighlight?: () => void;
+}
+
+const HIGHLIGHT_DURATION_MS = 1200;
+
+/**
+ * Auto-clear the highlight after the pulse animation completes. The effect
+ * depends on `onClearHighlight` — callers should pass a stable reference
+ * (e.g. wrapped in `useCallback`) so the timer isn't reset on every render.
+ */
+function useHighlightAutoClear(highlighted: boolean | undefined, onClearHighlight: (() => void) | undefined): void {
+  useEffect(() => {
+    if (!highlighted) return;
+    const timer = setTimeout(() => onClearHighlight?.(), HIGHLIGHT_DURATION_MS);
+    return () => clearTimeout(timer);
+  }, [highlighted, onClearHighlight]);
+}
+
+/**
+ * Wrapper around every tool renderer. Owns the outer wrapper div and all
+ * cross-cutting concerns: highlight class, scroll target (data-event-id),
+ * status attribute, auto-clear timer. Renderers only provide their content.
+ */
+function ToolShell({
+  kind,
+  call,
+  status,
+  highlighted,
+  onClearHighlight,
+  children,
+}: {
+  kind: 'bash' | 'read' | 'edit' | 'write' | 'grep' | 'generic';
+  call: CanonicalEvent;
+  status?: 'ok' | 'err';
+  highlighted?: boolean;
+  onClearHighlight?: () => void;
+  children: ReactNode;
+}) {
+  useHighlightAutoClear(highlighted, onClearHighlight);
+  return (
+    <div
+      className={`tb-tool tb-tool-${kind}${highlighted ? ' tb-tool-highlighted' : ''}`}
+      data-event-id={call.event_id}
+      {...(status ? { 'data-status': status } : {})}
+    >
+      {children}
+    </div>
+  );
 }
 
 export function ToolCallView({ call, result, defaultOpen, highlighted, onClearHighlight }: ToolCallProps) {
@@ -96,19 +143,13 @@ function BashTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
   const status = toolStatus(result);
   const lines = output.split('\n');
 
-  // Auto-clear highlight after animation
-  useEffect(() => {
-    if (highlighted) {
-      const timer = setTimeout(() => onClearHighlight?.(), 2000);
-      return () => clearTimeout(timer);
-    }
-  }, [highlighted, onClearHighlight]);
-
   return (
-    <div
-      className={`tb-tool tb-tool-bash${highlighted ? ' tb-tool-highlighted' : ''}`}
-      data-status={status}
-      data-event-id={call.event_id}
+    <ToolShell
+      kind="bash"
+      call={call}
+      highlighted={highlighted}
+      onClearHighlight={onClearHighlight}
+      status={status}
     >
       <ToolHead
         tool="Bash"
@@ -134,7 +175,7 @@ function BashTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
           )}
         </div>
       )}
-    </div>
+    </ToolShell>
   );
 }
 
@@ -153,18 +194,12 @@ function ReadTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
   const output = outputAsString(result);
   const lineCount = output ? output.split('\n').length : 0;
 
-  // Auto-clear highlight after animation
-  useEffect(() => {
-    if (highlighted) {
-      const timer = setTimeout(() => onClearHighlight?.(), 2000);
-      return () => clearTimeout(timer);
-    }
-  }, [highlighted, onClearHighlight]);
-
   return (
-    <div
-      className={`tb-tool tb-tool-read${highlighted ? ' tb-tool-highlighted' : ''}`}
-      data-event-id={call.event_id}
+    <ToolShell
+      kind="read"
+      call={call}
+      highlighted={highlighted}
+      onClearHighlight={onClearHighlight}
     >
       <ToolHead
         tool="Read"
@@ -180,7 +215,7 @@ function ReadTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
           <pre className="tb-pre">{output.slice(0, 8000)}{output.length > 8000 ? '\n…' : ''}</pre>
         </div>
       )}
-    </div>
+    </ToolShell>
   );
 }
 
@@ -210,18 +245,12 @@ function EditTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
   const oldLines = (input.old_string ?? '').split('\n');
   const newLines = (input.new_string ?? '').split('\n');
 
-  // Auto-clear highlight after animation
-  useEffect(() => {
-    if (highlighted) {
-      const timer = setTimeout(() => onClearHighlight?.(), 2000);
-      return () => clearTimeout(timer);
-    }
-  }, [highlighted, onClearHighlight]);
-
   return (
-    <div
-      className={`tb-tool tb-tool-edit${highlighted ? ' tb-tool-highlighted' : ''}`}
-      data-event-id={call.event_id}
+    <ToolShell
+      kind="edit"
+      call={call}
+      highlighted={highlighted}
+      onClearHighlight={onClearHighlight}
     >
       <ToolHead
         tool={isPatch ? 'apply_patch' : 'Edit'}
@@ -270,7 +299,7 @@ function EditTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
           </div>
         </div>
       )}
-    </div>
+    </ToolShell>
   );
 }
 
@@ -282,18 +311,12 @@ function WriteTool({ call, result, defaultOpen, highlighted, onClearHighlight }:
   const content = input.content ?? '';
   const lineCount = content ? content.split('\n').length : 0;
 
-  // Auto-clear highlight after animation
-  useEffect(() => {
-    if (highlighted) {
-      const timer = setTimeout(() => onClearHighlight?.(), 2000);
-      return () => clearTimeout(timer);
-    }
-  }, [highlighted, onClearHighlight]);
-
   return (
-    <div
-      className={`tb-tool tb-tool-write${highlighted ? ' tb-tool-highlighted' : ''}`}
-      data-event-id={call.event_id}
+    <ToolShell
+      kind="write"
+      call={call}
+      highlighted={highlighted}
+      onClearHighlight={onClearHighlight}
     >
       <ToolHead
         tool="Write"
@@ -309,7 +332,7 @@ function WriteTool({ call, result, defaultOpen, highlighted, onClearHighlight }:
           <pre className="tb-pre">{content.slice(0, 8000)}{content.length > 8000 ? '\n…' : ''}</pre>
         </div>
       )}
-    </div>
+    </ToolShell>
   );
 }
 
@@ -321,18 +344,12 @@ function GrepTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
   const output = outputAsString(result);
   const matchCount = output ? output.split('\n').filter((l) => l.trim()).length : 0;
 
-  // Auto-clear highlight after animation
-  useEffect(() => {
-    if (highlighted) {
-      const timer = setTimeout(() => onClearHighlight?.(), 2000);
-      return () => clearTimeout(timer);
-    }
-  }, [highlighted, onClearHighlight]);
-
   return (
-    <div
-      className={`tb-tool tb-tool-grep${highlighted ? ' tb-tool-highlighted' : ''}`}
-      data-event-id={call.event_id}
+    <ToolShell
+      kind="grep"
+      call={call}
+      highlighted={highlighted}
+      onClearHighlight={onClearHighlight}
     >
       <ToolHead
         tool="Grep"
@@ -354,7 +371,7 @@ function GrepTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
           <pre className="tb-pre">{output.slice(0, 8000)}{output.length > 8000 ? '\n…' : ''}</pre>
         </div>
       )}
-    </div>
+    </ToolShell>
   );
 }
 
@@ -364,18 +381,12 @@ function GenericTool({ call, result, defaultOpen, highlighted, onClearHighlight 
   const [open, setOpen] = useState(!!defaultOpen);
   const name = call.tool.name ?? 'tool';
 
-  // Auto-clear highlight after animation
-  useEffect(() => {
-    if (highlighted) {
-      const timer = setTimeout(() => onClearHighlight?.(), 2000);
-      return () => clearTimeout(timer);
-    }
-  }, [highlighted, onClearHighlight]);
-
   return (
-    <div
-      className={`tb-tool tb-tool-generic${highlighted ? ' tb-tool-highlighted' : ''}`}
-      data-event-id={call.event_id}
+    <ToolShell
+      kind="generic"
+      call={call}
+      highlighted={highlighted}
+      onClearHighlight={onClearHighlight}
     >
       <ToolHead
         tool={name}
@@ -395,6 +406,6 @@ function GenericTool({ call, result, defaultOpen, highlighted, onClearHighlight 
           )}
         </div>
       )}
-    </div>
+    </ToolShell>
   );
 }

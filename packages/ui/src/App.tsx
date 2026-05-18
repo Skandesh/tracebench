@@ -25,18 +25,24 @@ export function App() {
   const [activeErrorIndex, setActiveErrorIndex] = useState<number | null>(null);
   const timelineRef = useRef<HTMLDivElement | null>(null);
 
-  // Computed list of event IDs with errors
+  // Computed list of event IDs with errors. Two-pass per turn (index
+  // tool_results by parent first, then walk tool_calls) so total work is
+  // O(events) not O(events²).
   const errorEventIds = useMemo(() => {
     const ids: string[] = [];
     for (const turn of turns) {
-      for (const event of turn.events) {
-        if (event.event_type === 'tool_call') {
-          const result = turn.events.find(
-            (e) => e.event_type === 'tool_result' && e.parent_event_id === event.event_id
-          );
-          if (result?.tool.status === 'error') {
-            ids.push(event.event_id);
-          }
+      const resultByCallId = new Map<string, (typeof turn.events)[number]>();
+      for (const e of turn.events) {
+        if (e.event_type === 'tool_result' && e.parent_event_id) {
+          resultByCallId.set(e.parent_event_id, e);
+        }
+      }
+      for (const e of turn.events) {
+        if (
+          e.event_type === 'tool_call' &&
+          resultByCallId.get(e.event_id)?.tool.status === 'error'
+        ) {
+          ids.push(e.event_id);
         }
       }
     }
@@ -61,6 +67,22 @@ export function App() {
   const clearErrorHighlight = useCallback(() => {
     setActiveErrorIndex(null);
   }, []);
+
+  // "Click N err on any session card" intent. If it's the active session we
+  // can navigate immediately; otherwise switch sessions first and queue the
+  // navigation until turns finish loading (consumed below).
+  const [pendingErrorNavSession, setPendingErrorNavSession] = useState<string | null>(null);
+  const handleSessionErrorClick = useCallback(
+    (sessionId: string) => {
+      if (sessionId === activeId) {
+        navigateToFirstError();
+        return;
+      }
+      setActiveId(sessionId);
+      setPendingErrorNavSession(sessionId);
+    },
+    [activeId, navigateToFirstError],
+  );
 
   const refresh = useCallback(async () => {
     setSessionsLoading(true);
@@ -113,18 +135,41 @@ export function App() {
     return () => { cancelled = true; };
   }, [activeId]);
 
-  // Scroll to active error when index changes
+  // Consume pending "switch + jump" intent once turns load for the queued session.
+  useEffect(() => {
+    if (!pendingErrorNavSession) return;
+    if (pendingErrorNavSession !== activeId) return;
+    if (detailLoading) return;
+    if (errorEventIds.length === 0) {
+      // Session has no errors after all — drop the intent.
+      setPendingErrorNavSession(null);
+      return;
+    }
+    setActiveErrorIndex(0);
+    setPendingErrorNavSession(null);
+  }, [pendingErrorNavSession, activeId, detailLoading, errorEventIds]);
+
+  // Scroll to active error when index changes. The target element may not
+  // exist on the first paint after a session switch — retry on the next frame
+  // until it does or we give up.
   useEffect(() => {
     if (activeErrorIndex === null || errorEventIds.length === 0) return;
-
     const targetEventId = errorEventIds[activeErrorIndex];
-    const targetElement = timelineRef.current?.querySelector(
-      `[data-event-id="${targetEventId}"]`
-    ) as HTMLElement | null;
-
-    if (targetElement) {
-      targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
+    let cancelled = false;
+    let attempts = 0;
+    const tryScroll = () => {
+      if (cancelled) return;
+      const el = timelineRef.current?.querySelector(
+        `[data-event-id="${targetEventId}"]`,
+      ) as HTMLElement | null;
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+      if (attempts++ < 10) requestAnimationFrame(tryScroll);
+    };
+    requestAnimationFrame(tryScroll);
+    return () => { cancelled = true; };
   }, [activeErrorIndex, errorEventIds]);
 
   // Keyboard nav: j/k navigate sessions, / focuses search, Esc blurs input
@@ -166,7 +211,7 @@ export function App() {
           sessions={filteredSessions}
           activeId={activeId}
           setActiveId={setActiveId}
-          onErrorClick={navigateToFirstError}
+          onErrorClick={handleSessionErrorClick}
         />
         {sessionsError ? (
           <section className="tb-pane tb-pane-center"><div className="tb-empty">Error: {sessionsError}</div></section>

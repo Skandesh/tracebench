@@ -6,7 +6,13 @@ interface Props {
   sessions: Session[];
   activeId: string | null;
   setActiveId: (id: string) => void;
-  onErrorClick?: () => void;
+  /**
+   * Called when a user clicks the "N err" badge on a session card. Receives
+   * the session_id so the parent can (a) activate that session and (b) queue
+   * an error-navigation intent that fires after turns load. Always provided —
+   * works on inactive cards too.
+   */
+  onErrorClick?: (sessionId: string) => void;
 }
 
 const HARNESS_COLOR: Record<Harness, string> = {
@@ -60,7 +66,7 @@ export function SessionList({ sessions, activeId, setActiveId, onErrorClick }: P
             session={s}
             active={s.session_id === activeId}
             onClick={() => setActiveId(s.session_id)}
-            onErrorClick={s.session_id === activeId ? onErrorClick : undefined}
+            onErrorClick={onErrorClick}
           />
         ))}
         {sessions.length === 0 && (
@@ -80,7 +86,7 @@ function SessionCard({
   session: Session;
   active: boolean;
   onClick: () => void;
-  onErrorClick?: () => void;
+  onErrorClick?: (sessionId: string) => void;
 }) {
   const harnessColor = HARNESS_COLOR[session.harness] ?? 'var(--mute-strong)';
   const idShort = session.session_id.slice(0, 8);
@@ -108,10 +114,14 @@ function SessionCard({
                 <button
                   className="tb-sess-err tb-sess-err-btn"
                   onClick={(e) => {
+                    // Don't let the click bubble up to the card button (which
+                    // would also activate the session, racing the explicit
+                    // handler). We activate + queue navigation here.
                     e.stopPropagation();
-                    onErrorClick();
+                    onErrorClick(session.session_id);
                   }}
-                  title="Click to jump to errors"
+                  title={active ? 'Jump to errors' : 'Open this session and jump to errors'}
+                  aria-label={`${session.aggregates.tool_error_count} errors — open and jump to first error`}
                 >
                   {session.aggregates.tool_error_count} err
                 </button>

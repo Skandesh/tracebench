@@ -28,6 +28,11 @@
   --diff-del-bg: oklch(0.32 0.07 25 / 0.22);
   --diff-del-fg: oklch(0.82 0.12 25);
 
+  /* Error / warning red — shared by tool_status pill, session-card err
+     button, timeline-end err link, and the highlight pulse animation. */
+  --color-error: oklch(0.72 0.18 25);
+  --color-error-hover: oklch(0.7 0.18 25);
+
   --kw: oklch(0.78 0.13 295);
   --str: oklch(0.82 0.13 130);
   --num: oklch(0.82 0.13 75);
@@ -42,6 +47,9 @@
 }
 
 [data-theme="light"] {
+  --color-error: oklch(0.55 0.18 25);
+  --color-error-hover: oklch(0.5 0.18 25);
+
   --bg: oklch(0.985 0.003 90);
   --bg-elev: oklch(0.975 0.004 90);
   --bg-elev-2: oklch(0.96 0.004 90);
@@ -464,15 +472,15 @@ kbd {
      is now rendered inline via .tb-sess-err. */
   font-family: 'Geist Mono', monospace;
   font-size: 9.5px;
-  color: oklch(0.72 0.18 25);
-  background: oklch(0.72 0.18 25 / 0.14);
+  color: var(--color-error);
+  background: oklch(from var(--color-error) l c h / 0.14);
   padding: 1px 5px;
   border-radius: 3px;
   letter-spacing: 0.02em;
 }
 
 .tb-sess-err {
-  color: oklch(0.7 0.18 25);
+  color: var(--color-error-hover);
   font-weight: 500;
 }
 
@@ -484,21 +492,14 @@ kbd {
   padding: 0;
   font: inherit;
   cursor: pointer;
-  color: oklch(0.7 0.18 25);
+  color: var(--color-error-hover);
   font-weight: 500;
   text-decoration: underline;
   text-decoration-color: transparent;
   transition: text-decoration-color 0.15s;
 }
 .tb-sess-err-btn:hover {
-  text-decoration-color: oklch(0.7 0.18 25);
-}
-
-[data-theme="light"] .tb-sess-err-btn {
-  color: oklch(0.5 0.18 25);
-}
-[data-theme="light"] .tb-sess-err-btn:hover {
-  text-decoration-color: oklch(0.5 0.18 25);
+  text-decoration-color: var(--color-error-hover);
 }
 
 /* ── Session header (center pane) ────────────────────────────────────────── */
@@ -780,35 +781,38 @@ kbd {
   border-radius: 3px;
 }
 
-/* Highlighted tool call (navigated-to error) */
+/* Highlighted tool call (navigated-to error).
+   Single keyframe animates an outline + a soft pulse ring on box-shadow.
+   Outline doesn't reflow, so the ring sits cleanly over the tool. */
 .tb-tool-highlighted {
-  animation: tb-highlight-pulse 2s ease-out;
-  position: relative;
+  animation: tb-highlight 1.2s ease-out;
 }
 
-.tb-tool-highlighted::before {
-  content: '';
-  position: absolute;
-  inset: -2px;
-  border: 2px solid oklch(0.72 0.18 25);
-  border-radius: calc(var(--radius) + 2px);
-  pointer-events: none;
-  animation: tb-highlight-border 2s ease-out;
+@keyframes tb-highlight {
+  0% {
+    outline: 2px solid var(--color-error);
+    outline-offset: 0;
+    box-shadow: 0 0 0 0 oklch(from var(--color-error) l c h / 0.4);
+  }
+  20% {
+    box-shadow: 0 0 0 6px oklch(from var(--color-error) l c h / 0.25);
+  }
+  100% {
+    outline: 2px solid oklch(from var(--color-error) l c h / 0);
+    outline-offset: 0;
+    box-shadow: 0 0 0 0 oklch(from var(--color-error) l c h / 0);
+  }
 }
 
-@keyframes tb-highlight-pulse {
-  0% { box-shadow: 0 0 0 0 oklch(0.72 0.18 25 / 0.4); }
-  20% { box-shadow: 0 0 0 6px oklch(0.72 0.18 25 / 0.3); }
-  100% { box-shadow: 0 0 0 0 oklch(0.72 0.18 25 / 0); }
-}
-
-@keyframes tb-highlight-border {
-  0%, 70% { opacity: 1; }
-  100% { opacity: 0; }
-}
-
-[data-theme="light"] .tb-tool-highlighted::before {
-  border-color: oklch(0.55 0.18 25);
+@media (prefers-reduced-motion: reduce) {
+  .tb-tool-highlighted {
+    /* Hold the outline statically for a moment instead of pulsing. */
+    animation: tb-highlight-static 1.2s linear;
+  }
+  @keyframes tb-highlight-static {
+    0%, 80% { outline: 2px solid var(--color-error); outline-offset: 0; }
+    100%    { outline: 2px solid oklch(from var(--color-error) l c h / 0); }
+  }
 }
 
 .tb-tool-body {
@@ -933,20 +937,13 @@ kbd {
   padding: 0;
   font: inherit;
   cursor: pointer;
-  color: oklch(0.72 0.16 25);
+  color: var(--color-error);
   text-decoration: underline;
   text-decoration-color: transparent;
   transition: text-decoration-color 0.15s;
 }
 .tb-timeline-end-err:hover {
-  text-decoration-color: oklch(0.72 0.16 25);
-}
-
-[data-theme="light"] .tb-timeline-end-err {
-  color: oklch(0.5 0.16 25);
-}
-[data-theme="light"] .tb-timeline-end-err:hover {
-  text-decoration-color: oklch(0.5 0.16 25);
+  text-decoration-color: var(--color-error);
 }
 
 /* ── Analytics rail ──────────────────────────────────────────────────────── */

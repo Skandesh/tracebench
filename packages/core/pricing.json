@@ -1,0 +1,115 @@
+{
+  "_meta": {
+    "source": "LiteLLM model_prices_and_context_window.json (subset)",
+    "fetched_at": "2026-05-18",
+    "notes": "Vendored subset covering Anthropic models used by Claude Code in v0.1. Prices are USD per token. Refresh via scripts/refresh-pricing (not yet implemented)."
+  },
+  "models": {
+    "claude-sonnet-4-5": {
+      "input_per_token": 0.000003,
+      "output_per_token": 0.000015,
+      "cache_read_per_token": 0.0000003,
+      "cache_creation_per_token": 0.00000375,
+      "max_input_tokens": 200000
+    },
+    "claude-sonnet-4-6": {
+      "input_per_token": 0.000003,
+      "output_per_token": 0.000015,
+      "cache_read_per_token": 0.0000003,
+      "cache_creation_per_token": 0.00000375,
+      "max_input_tokens": 200000
+    },
+    "claude-opus-4-5": {
+      "input_per_token": 0.000015,
+      "output_per_token": 0.000075,
+      "cache_read_per_token": 0.0000015,
+      "cache_creation_per_token": 0.00001875,
+      "max_input_tokens": 200000
+    },
+    "claude-opus-4-6": {
+      "input_per_token": 0.000015,
+      "output_per_token": 0.000075,
+      "cache_read_per_token": 0.0000015,
+      "cache_creation_per_token": 0.00001875,
+      "max_input_tokens": 200000
+    },
+    "claude-opus-4-7": {
+      "input_per_token": 0.000015,
+      "output_per_token": 0.000075,
+      "cache_read_per_token": 0.0000015,
+      "cache_creation_per_token": 0.00001875,
+      "max_input_tokens": 1000000
+    },
+    "claude-haiku-4-5": {
+      "input_per_token": 0.000001,
+      "output_per_token": 0.000005,
+      "cache_read_per_token": 0.0000001,
+      "cache_creation_per_token": 0.00000125,
+      "max_input_tokens": 200000
+    },
+    "claude-3-5-sonnet-20241022": {
+      "input_per_token": 0.000003,
+      "output_per_token": 0.000015,
+      "cache_read_per_token": 0.0000003,
+      "cache_creation_per_token": 0.00000375,
+      "max_input_tokens": 200000
+    },
+    "claude-3-5-haiku-20241022": {
+      "input_per_token": 0.0000008,
+      "output_per_token": 0.000004,
+      "cache_read_per_token": 0.00000008,
+      "cache_creation_per_token": 0.000001,
+      "max_input_tokens": 200000
+    },
+    "gpt-5": {
+      "input_per_token": 0.00000125,
+      "output_per_token": 0.00001,
+      "cache_read_per_token": 0.000000125,
+      "cache_creation_per_token": 0,
+      "max_input_tokens": 256000
+    },
+    "gpt-5-codex": {
+      "input_per_token": 0.00000125,
+      "output_per_token": 0.00001,
+      "cache_read_per_token": 0.000000125,
+      "cache_creation_per_token": 0,
+      "max_input_tokens": 256000
+    },
+    "gpt-5.3-codex": {
+      "input_per_token": 0.000002,
+      "output_per_token": 0.000012,
+      "cache_read_per_token": 0.0000002,
+      "cache_creation_per_token": 0,
+      "max_input_tokens": 258400
+    },
+    "gpt-5.3": {
+      "input_per_token": 0.000002,
+      "output_per_token": 0.000012,
+      "cache_read_per_token": 0.0000002,
+      "cache_creation_per_token": 0,
+      "max_input_tokens": 258400
+    },
+    "gpt-5.5": {
+      "input_per_token": 0.0000025,
+      "output_per_token": 0.000015,
+      "cache_read_per_token": 0.00000025,
+      "cache_creation_per_token": 0,
+      "max_input_tokens": 320000
+    },
+    "gpt-5.5-codex": {
+      "input_per_token": 0.0000025,
+      "output_per_token": 0.000015,
+      "cache_read_per_token": 0.00000025,
+      "cache_creation_per_token": 0,
+      "max_input_tokens": 320000
+    }
+  },
+  "aliases": {
+    "claude-sonnet-4-5-20250929": "claude-sonnet-4-5",
+    "claude-sonnet-4-6-20251015": "claude-sonnet-4-6",
+    "claude-opus-4-5-20250901": "claude-opus-4-5",
+    "claude-opus-4-6-20251020": "claude-opus-4-6",
+    "claude-opus-4-7-20260101": "claude-opus-4-7",
+    "claude-haiku-4-5-20251001": "claude-haiku-4-5"
+  }
+}

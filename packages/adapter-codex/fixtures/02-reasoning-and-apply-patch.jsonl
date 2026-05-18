@@ -1,0 +1,11 @@
+{"timestamp":"2026-05-17T15:00:00.000Z","type":"session_meta","payload":{"id":"019cab12-0002-7000-0000-000000000002","timestamp":"2026-05-17T15:00:00.000Z","cwd":"/Users/me/code/proj","originator":"Codex CLI","cli_version":"0.115.0","source":"terminal","model_provider":"openai"}}
+{"timestamp":"2026-05-17T15:00:00.500Z","type":"turn_context","payload":{"turn_id":"019cab12-0002-7000-0000-bbbbbbbbbbbb","cwd":"/Users/me/code/proj","model":"gpt-5.3-codex","effort":"xhigh"}}
+{"timestamp":"2026-05-17T15:00:01.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"019cab12-0002-7000-0000-bbbbbbbbbbbb","model_context_window":258400}}
+{"timestamp":"2026-05-17T15:00:01.100Z","type":"event_msg","payload":{"type":"user_message","message":"Fix the race condition in WorkerPool.drain"}}
+{"timestamp":"2026-05-17T15:00:02.000Z","type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"Let me look at the pool implementation first."}],"content":null,"encrypted_content":"gAAAAA..."}}
+{"timestamp":"2026-05-17T15:00:03.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"cat src/pool.ts\"}","call_id":"call_view"}}
+{"timestamp":"2026-05-17T15:00:03.100Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_view","output":"class WorkerPool { ... }"}}
+{"timestamp":"2026-05-17T15:00:04.000Z","type":"response_item","payload":{"type":"custom_tool_call","status":"completed","call_id":"call_patch","name":"apply_patch","input":"*** Begin Patch\n*** Update File: src/pool.ts\n@@\n-  async drain() {\n+  async drain() {\n+    this.closed = true;\n*** End Patch"}}
+{"timestamp":"2026-05-17T15:00:04.500Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_patch","output":"Patched src/pool.ts"}}
+{"timestamp":"2026-05-17T15:00:05.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":2200,"cached_input_tokens":1800,"output_tokens":140,"reasoning_output_tokens":600,"total_tokens":2940},"model_context_window":258400}}}
+{"timestamp":"2026-05-17T15:00:06.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Fixed."}]}}

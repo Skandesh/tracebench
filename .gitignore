@@ -1,0 +1,21 @@
+node_modules
+dist
+build
+.DS_Store
+*.log
+.env
+.env.local
+.vite
+*.db
+*.db-journal
+coverage
+.tracebench
+
+# Internal planning artifacts — kept locally, not part of the public repo
+docs/
+.playwright-mcp/
+tracebench-running.png
+.claude/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

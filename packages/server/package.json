@@ -1,0 +1,28 @@
+{
+  "name": "@tracebench/server",
+  "version": "0.1.0-alpha",
+  "private": true,
+  "type": "module",
+  "main": "./dist/server.js",
+  "bin": {
+    "tracebench": "./dist/cli.js"
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/cli.ts",
+    "start": "node dist/cli.js",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@tracebench/core": "workspace:*",
+    "@tracebench/adapter-claude-code": "workspace:*",
+    "@tracebench/adapter-codex": "workspace:*",
+    "fastify": "^4.28.1",
+    "@fastify/static": "^7.0.4"
+  },
+  "devDependencies": {
+    "tsx": "^4.16.2"
+  }
+}

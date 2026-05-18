@@ -1,7 +1,16 @@
 {
   "name": "@tracebench/adapter-claude-code",
-  "version": "0.1.0-alpha",
-  "private": true,
+  "version": "0.1.0",
+  "description": "Tracebench adapter for Claude Code session logs (~/.claude/projects/**/*.jsonl).",
+  "license": "Apache-2.0",
+  "author": "Skandesh",
+  "homepage": "https://github.com/Skandesh/tracebench",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Skandesh/tracebench.git",
+    "directory": "packages/adapter-claude-code"
+  },
+  "publishConfig": { "access": "public" },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -15,7 +24,8 @@
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepack": "pnpm build"
   },
   "dependencies": {
     "@tracebench/core": "workspace:*"

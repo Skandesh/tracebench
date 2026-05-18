@@ -31,10 +31,13 @@ export interface BuiltServer {
 }
 
 function findUiBuildDir(): string | null {
-  // dist/server.js is in packages/server/dist; UI build is in packages/ui/dist
+  // When installed from npm the UI lives at <pkg>/ui (copied by prepack).
+  // When running from the monorepo it lives at packages/ui/dist.
+  // dist/server.js is in <pkg>/dist or packages/server/dist, so walk up.
   const here = dirname(fileURLToPath(import.meta.url));
   const candidates = [
-    join(here, '..', '..', 'ui', 'dist'),
+    join(here, '..', 'ui'), // npm-installed layout
+    join(here, '..', '..', 'ui', 'dist'), // monorepo layout
     join(here, '..', '..', '..', 'ui', 'dist'),
   ];
   for (const c of candidates) {

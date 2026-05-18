@@ -1,19 +1,29 @@
 {
-  "name": "@tracebench/server",
-  "version": "0.1.0-alpha",
-  "private": true,
+  "name": "tracebench",
+  "version": "0.1.0",
   "type": "module",
+  "description": "Local-first viewer for AI coding agent sessions. Reads Claude Code and Codex.",
+  "keywords": ["claude-code", "codex", "agents", "ai", "viewer", "local-first", "tokens", "cost"],
+  "license": "Apache-2.0",
+  "author": "Skandesh",
+  "homepage": "https://github.com/Skandesh/tracebench",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Skandesh/tracebench.git"
+  },
+  "bugs": "https://github.com/Skandesh/tracebench/issues",
   "main": "./dist/server.js",
   "bin": {
     "tracebench": "./dist/cli.js"
   },
-  "files": ["dist"],
+  "files": ["dist", "ui", "README.md", "LICENSE"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/cli.ts",
     "start": "node dist/cli.js",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepack": "node scripts/prepack.mjs"
   },
   "dependencies": {
     "@tracebench/core": "workspace:*",
@@ -24,5 +34,11 @@
   },
   "devDependencies": {
     "tsx": "^4.16.2"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

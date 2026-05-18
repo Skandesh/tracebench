@@ -19,3 +19,9 @@ tracebench-running.png
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
+
+# prepack artifacts in the publishable server package
+packages/server/ui/
+packages/server/README.md
+packages/server/LICENSE
+*.tgz

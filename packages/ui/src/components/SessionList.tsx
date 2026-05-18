@@ -6,6 +6,7 @@ interface Props {
   sessions: Session[];
   activeId: string | null;
   setActiveId: (id: string) => void;
+  onErrorClick?: () => void;
 }
 
 const HARNESS_COLOR: Record<Harness, string> = {
@@ -15,7 +16,7 @@ const HARNESS_COLOR: Record<Harness, string> = {
   cursor: 'var(--mute-strong)',
 };
 
-export function SessionList({ sessions, activeId, setActiveId }: Props) {
+export function SessionList({ sessions, activeId, setActiveId, onErrorClick }: Props) {
   // Group projects for the header by last-active.
   const projects: { name: string; count: number; lastActive: string }[] = [];
   const byProject = new Map<string, { count: number; latest: string }>();
@@ -59,6 +60,7 @@ export function SessionList({ sessions, activeId, setActiveId }: Props) {
             session={s}
             active={s.session_id === activeId}
             onClick={() => setActiveId(s.session_id)}
+            onErrorClick={s.session_id === activeId ? onErrorClick : undefined}
           />
         ))}
         {sessions.length === 0 && (
@@ -73,10 +75,12 @@ function SessionCard({
   session,
   active,
   onClick,
+  onErrorClick,
 }: {
   session: Session;
   active: boolean;
   onClick: () => void;
+  onErrorClick?: () => void;
 }) {
   const harnessColor = HARNESS_COLOR[session.harness] ?? 'var(--mute-strong)';
   const idShort = session.session_id.slice(0, 8);
@@ -100,7 +104,20 @@ function SessionCard({
           {session.aggregates.tool_error_count > 0 && (
             <>
               <span className="tb-sess-dot" />
-              <span className="tb-sess-err">{session.aggregates.tool_error_count} err</span>
+              {onErrorClick ? (
+                <button
+                  className="tb-sess-err tb-sess-err-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onErrorClick();
+                  }}
+                  title="Click to jump to errors"
+                >
+                  {session.aggregates.tool_error_count} err
+                </button>
+              ) : (
+                <span className="tb-sess-err">{session.aggregates.tool_error_count} err</span>
+              )}
             </>
           )}
         </span>

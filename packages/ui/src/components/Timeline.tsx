@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, type Ref } from 'react';
 import type { Session, Turn, CanonicalEvent } from '../types';
 import { Icons } from '../icons';
 import { formatCost, formatDuration, localTime } from '../format';
@@ -10,9 +10,30 @@ interface Props {
   loading: boolean;
   filterTool: string | null;
   setFilterTool: (t: string | null) => void;
+  timelineRef?: Ref<HTMLDivElement>;
+  errorEventIds?: string[];
+  activeErrorIndex?: number | null;
+  onErrorClick?: () => void;
+  onClearErrorHighlight?: () => void;
 }
 
-export function Timeline({ session, turns, loading, filterTool, setFilterTool }: Props) {
+export function Timeline({
+  session,
+  turns,
+  loading,
+  filterTool,
+  setFilterTool,
+  timelineRef,
+  errorEventIds,
+  activeErrorIndex,
+  onErrorClick,
+  onClearErrorHighlight,
+}: Props) {
+  // Compute the highlighted event ID
+  const highlightedEventId =
+    activeErrorIndex != null && errorEventIds && errorEventIds.length > 0
+      ? errorEventIds[activeErrorIndex] ?? null
+      : null;
   const toolCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const t of turns) {
@@ -48,10 +69,16 @@ export function Timeline({ session, turns, loading, filterTool, setFilterTool }:
         filterTool={filterTool}
         setFilterTool={setFilterTool}
       />
-      <div className="tb-timeline">
+      <div className="tb-timeline" ref={timelineRef}>
         {loading && <div className="tb-empty">Loading…</div>}
         {!loading && filteredTurns.map((turn, idx) => (
-          <TurnGroup key={turn.turn_id} turnNumber={idx + 1} turn={turn} />
+          <TurnGroup
+            key={turn.turn_id}
+            turnNumber={idx + 1}
+            turn={turn}
+            highlightedEventId={highlightedEventId}
+            onClearHighlight={onClearErrorHighlight}
+          />
         ))}
         {!loading && turns.length === 0 && (
           <div className="tb-empty">No events.</div>
@@ -60,7 +87,18 @@ export function Timeline({ session, turns, loading, filterTool, setFilterTool }:
           <div className="tb-timeline-end">
             <span className="tb-end-dot" />
             <span>
-              Session ended · {formatDuration(session.aggregates.duration_ms)} · {session.aggregates.tool_error_count} errors
+              Session ended · {formatDuration(session.aggregates.duration_ms)} ·{' '}
+              {session.aggregates.tool_error_count > 0 ? (
+                <button
+                  className="tb-timeline-end-err"
+                  onClick={onErrorClick}
+                  title={`Click to cycle through ${session.aggregates.tool_error_count} errors`}
+                >
+                  {session.aggregates.tool_error_count} errors
+                </button>
+              ) : (
+                <span>{session.aggregates.tool_error_count} errors</span>
+              )}
             </span>
           </div>
         )}
@@ -121,7 +159,17 @@ function SessionHeader({
   );
 }
 
-function TurnGroup({ turnNumber, turn }: { turnNumber: number; turn: Turn }) {
+function TurnGroup({
+  turnNumber,
+  turn,
+  highlightedEventId,
+  onClearHighlight,
+}: {
+  turnNumber: number;
+  turn: Turn;
+  highlightedEventId?: string | null;
+  onClearHighlight?: () => void;
+}) {
   // Build a map of tool_call event_id → tool_result event for pairing
   const resultByCallId = new Map<string, CanonicalEvent>();
   for (const e of turn.events) {
@@ -146,6 +194,8 @@ function TurnGroup({ turnNumber, turn }: { turnNumber: number; turn: Turn }) {
                 key={e.event_id}
                 call={e}
                 result={resultByCallId.get(e.event_id)}
+                highlighted={e.event_id === highlightedEventId}
+                onClearHighlight={onClearHighlight}
               />
             );
           }

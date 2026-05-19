@@ -1,6 +1,6 @@
 {
   "name": "@tracebench/core",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Canonical event schema, SQLite storage, and pricing for tracebench adapters.",
   "license": "Apache-2.0",
   "author": "Skandesh",

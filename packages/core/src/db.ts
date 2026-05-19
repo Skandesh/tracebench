@@ -99,6 +99,23 @@ const MIGRATIONS: { version: number; name: string; sql: string }[] = [
       CREATE INDEX context_snapshots_by_session ON context_snapshots(session_id);
     `,
   },
+  {
+    version: 2,
+    name: 'precomputed_session_aggregates',
+    sql: `
+      ALTER TABLE sessions ADD COLUMN total_cost_usd           REAL;
+      ALTER TABLE sessions ADD COLUMN total_input_tokens       INTEGER;
+      ALTER TABLE sessions ADD COLUMN total_output_tokens      INTEGER;
+      ALTER TABLE sessions ADD COLUMN total_cache_read_tokens  INTEGER;
+      ALTER TABLE sessions ADD COLUMN total_cache_create_tokens INTEGER;
+      ALTER TABLE sessions ADD COLUMN total_reasoning_tokens   INTEGER;
+      ALTER TABLE sessions ADD COLUMN duration_ms              INTEGER;
+      ALTER TABLE sessions ADD COLUMN turn_count               INTEGER;
+      ALTER TABLE sessions ADD COLUMN tool_call_count          INTEGER;
+      ALTER TABLE sessions ADD COLUMN tool_error_count         INTEGER;
+      ALTER TABLE sessions ADD COLUMN message_count            INTEGER;
+    `,
+  },
 ];
 
 function ensureMigrationsTable(db: DB): void {
@@ -148,15 +165,44 @@ export function openDb(opts: OpenDbOptions): TracebenchDb {
 
 // ── Session writes ──────────────────────────────────────────────────────────
 
-export function upsertSession(db: TracebenchDb, s: Session): void {
+/**
+ * Pre-computed-aggregate fields the indexer can attach to a session row to
+ * avoid a runtime GROUP BY over events. All fields are optional; null/missing
+ * means "compute on demand."
+ */
+export interface SessionAggregateRow {
+  total_cost_usd?: number | null;
+  total_input_tokens?: number | null;
+  total_output_tokens?: number | null;
+  total_cache_read_tokens?: number | null;
+  total_cache_create_tokens?: number | null;
+  total_reasoning_tokens?: number | null;
+  duration_ms?: number | null;
+  turn_count?: number | null;
+  tool_call_count?: number | null;
+  tool_error_count?: number | null;
+  message_count?: number | null;
+}
+
+export function upsertSession(
+  db: TracebenchDb,
+  s: Session,
+  agg?: SessionAggregateRow,
+): void {
   db.raw
     .prepare(
       `INSERT INTO sessions (
          session_id, harness, project_path, title, started_at, ended_at,
-         model, raw_path, format_version, mtime_ms
+         model, raw_path, format_version, mtime_ms,
+         total_cost_usd, total_input_tokens, total_output_tokens,
+         total_cache_read_tokens, total_cache_create_tokens, total_reasoning_tokens,
+         duration_ms, turn_count, tool_call_count, tool_error_count, message_count
        ) VALUES (
          @session_id, @harness, @project_path, @title, @started_at, @ended_at,
-         @model, @raw_path, @format_version, @mtime_ms
+         @model, @raw_path, @format_version, @mtime_ms,
+         @total_cost_usd, @total_input_tokens, @total_output_tokens,
+         @total_cache_read_tokens, @total_cache_create_tokens, @total_reasoning_tokens,
+         @duration_ms, @turn_count, @tool_call_count, @tool_error_count, @message_count
        )
        ON CONFLICT(session_id) DO UPDATE SET
          harness         = excluded.harness,
@@ -167,13 +213,35 @@ export function upsertSession(db: TracebenchDb, s: Session): void {
          model           = excluded.model,
          raw_path        = excluded.raw_path,
          format_version  = excluded.format_version,
-         mtime_ms        = excluded.mtime_ms`,
+         mtime_ms        = excluded.mtime_ms,
+         total_cost_usd          = excluded.total_cost_usd,
+         total_input_tokens      = excluded.total_input_tokens,
+         total_output_tokens     = excluded.total_output_tokens,
+         total_cache_read_tokens = excluded.total_cache_read_tokens,
+         total_cache_create_tokens = excluded.total_cache_create_tokens,
+         total_reasoning_tokens  = excluded.total_reasoning_tokens,
+         duration_ms             = excluded.duration_ms,
+         turn_count              = excluded.turn_count,
+         tool_call_count         = excluded.tool_call_count,
+         tool_error_count        = excluded.tool_error_count,
+         message_count           = excluded.message_count`,
     )
     .run({
       ...s,
       title: s.title ?? null,
       ended_at: s.ended_at ?? null,
       model: s.model ?? null,
+      total_cost_usd: agg?.total_cost_usd ?? null,
+      total_input_tokens: agg?.total_input_tokens ?? null,
+      total_output_tokens: agg?.total_output_tokens ?? null,
+      total_cache_read_tokens: agg?.total_cache_read_tokens ?? null,
+      total_cache_create_tokens: agg?.total_cache_create_tokens ?? null,
+      total_reasoning_tokens: agg?.total_reasoning_tokens ?? null,
+      duration_ms: agg?.duration_ms ?? null,
+      turn_count: agg?.turn_count ?? null,
+      tool_call_count: agg?.tool_call_count ?? null,
+      tool_error_count: agg?.tool_error_count ?? null,
+      message_count: agg?.message_count ?? null,
     });
 }
 

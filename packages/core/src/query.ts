@@ -102,6 +102,20 @@ export interface ListSessionsOptions {
   offset?: number;
 }
 
+interface SessionWithAggCols extends SessionRow {
+  total_cost_usd: number | null;
+  total_input_tokens: number | null;
+  total_output_tokens: number | null;
+  total_cache_read_tokens: number | null;
+  total_cache_create_tokens: number | null;
+  total_reasoning_tokens: number | null;
+  duration_ms: number | null;
+  turn_count: number | null;
+  tool_call_count: number | null;
+  tool_error_count: number | null;
+  message_count: number | null;
+}
+
 export function listSessions(
   db: TracebenchDb,
   opts: ListSessionsOptions = {},
@@ -120,18 +134,39 @@ export function listSessions(
     where.push('(title LIKE @q OR project_path LIKE @q OR session_id LIKE @q)');
     params.q = `%${opts.search}%`;
   }
-  const limit = opts.limit ?? 200;
+  // Default high enough to cover a normal user's full directory in one request.
+  // The UI fetches once and filters client-side, so the API caller wants the
+  // full list, not paginated. External callers can still pass a smaller limit.
+  const limit = opts.limit ?? 5000;
   const offset = opts.offset ?? 0;
+  // Aggregates live on the sessions row (filled by the indexer via
+  // summarizeEvents), so the list endpoint is a pure SELECT — no GROUP BY.
   const sql = `
     SELECT * FROM sessions
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
     ORDER BY started_at DESC
     LIMIT ${limit} OFFSET ${offset}
   `;
-  const rows = db.raw.prepare(sql).all(params) as SessionRow[];
+  const rows = db.raw.prepare(sql).all(params) as SessionWithAggCols[];
+
   return rows.map((r) => {
     const session = rowToSession(r);
-    return { ...session, aggregates: computeSessionAggregates(db, session.session_id) };
+    const aggregates: SessionAggregates = {
+      total_cost_usd: r.total_cost_usd ?? 0,
+      total_input_tokens: r.total_input_tokens ?? 0,
+      total_output_tokens: r.total_output_tokens ?? 0,
+      total_cache_read_tokens: r.total_cache_read_tokens ?? 0,
+      total_cache_creation_tokens: r.total_cache_create_tokens ?? 0,
+      duration_ms: r.duration_ms ?? 0,
+      turn_count: r.turn_count ?? 0,
+      tool_call_count: r.tool_call_count ?? 0,
+      tool_error_count: r.tool_error_count ?? 0,
+      message_count: r.message_count ?? 0,
+      // List view doesn't need these; getSession() returns them on detail.
+      files_touched: [],
+      models_used: session.model ? [session.model] : [],
+    };
+    return { ...session, aggregates };
   });
 }
 

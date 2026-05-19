@@ -7,7 +7,7 @@
 // The indexer accepts an optional per-harness root override so a user can
 // point at a non-default Codex / Claude Code dir.
 
-import { upsertSession, insertEvents, deleteSessionEvents } from '@tracebench/core';
+import { upsertSession, insertEvents, deleteSessionEvents, summarizeEvents } from '@tracebench/core';
 import type { Harness, TracebenchDb } from '@tracebench/core';
 import { ADAPTERS, type AdapterModule, type AdapterDiscovered } from './adapters.js';
 
@@ -120,9 +120,12 @@ async function indexOne(
 ): Promise<void> {
   const { session, events } = await adapter.load(d.file_path);
   session.mtime_ms = d.mtime_ms;
+  // Summarize once, in-memory, while we already have all the events. Stored
+  // on the sessions row so /api/sessions is a pure SELECT — no GROUP BY.
+  const aggregates = summarizeEvents(events);
   const tx = db.raw.transaction(() => {
     deleteSessionEvents(db, session.session_id);
-    upsertSession(db, session);
+    upsertSession(db, session, aggregates);
     insertEvents(db, events);
   });
   tx();

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Harness, Session, ToolCount, Turn } from './types';
 import { listSessions, getSession, getSessionTurns } from './api';
 import { useErrorNavigation } from './hooks/useErrorNavigation';
@@ -6,6 +6,12 @@ import { TopBar } from './components/TopBar';
 import { SessionList } from './components/SessionList';
 import { Timeline } from './components/Timeline';
 import { AnalyticsRail } from './components/AnalyticsRail';
+
+interface SessionDetailBundle {
+  session: Session;
+  toolCounts: ToolCount[];
+  turns: Turn[];
+}
 
 export function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -27,29 +33,57 @@ export function App() {
   // jump" intent — live in this hook. App just decides when to invoke it.
   const errNav = useErrorNavigation({ turns, activeId, detailLoading, setActiveId });
 
+  // One initial fetch of *all* sessions, no harness filter. Filter + search
+  // happen in-memory below so switching tabs is instant and tab counts are
+  // always accurate.
   const refresh = useCallback(async () => {
     setSessionsLoading(true);
     setSessionsError(null);
     try {
-      const { sessions: rows } = await listSessions({ harness: filterHarness, q: search || undefined });
+      const { sessions: rows } = await listSessions();
       setSessions(rows);
-      if (rows.length > 0) {
-        setActiveId((cur) => (cur && rows.some((s) => s.session_id === cur) ? cur : rows[0]!.session_id));
-      } else {
-        setActiveId(null);
-      }
     } catch (e) {
       setSessionsError(e instanceof Error ? e.message : String(e));
     } finally {
       setSessionsLoading(false);
     }
-  }, [filterHarness, search]);
+  }, []);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
+  // The list visible in the SessionList — derived purely from in-memory state.
+  const filteredSessions = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return sessions.filter((s) => {
+      if (filterHarness !== 'all' && s.harness !== filterHarness) return false;
+      if (!q) return true;
+      return (
+        s.session_id.toLowerCase().includes(q) ||
+        s.project_path.toLowerCase().includes(q) ||
+        (s.title?.toLowerCase().includes(q) ?? false)
+      );
+    });
+  }, [sessions, filterHarness, search]);
+
+  // Auto-select a sensible active session when the visible list changes:
+  //   - if the current active is still visible, keep it
+  //   - otherwise pick the first visible session (newest first)
+  //   - if nothing is visible, clear the selection
+  useEffect(() => {
+    setActiveId((cur) => {
+      if (cur && filteredSessions.some((s) => s.session_id === cur)) return cur;
+      return filteredSessions[0]?.session_id ?? null;
+    });
+  }, [filteredSessions]);
+
   // Fetch detail + turns when active session changes
+  // In-memory cache: session_id → { session, toolCounts, turns }. Re-visiting
+  // a session you've already loaded is instant. Held in a ref so it doesn't
+  // trigger re-renders when populated.
+  const detailCacheRef = useRef<Map<string, SessionDetailBundle>>(new Map());
+
   useEffect(() => {
     if (!activeId) {
       setActiveSession(null);
@@ -57,14 +91,30 @@ export function App() {
       setTurns([]);
       return;
     }
+    const cached = detailCacheRef.current.get(activeId);
+    if (cached) {
+      // Cache hit — paint immediately, no spinner, no network.
+      setActiveSession(cached.session);
+      setToolCounts(cached.toolCounts);
+      setTurns(cached.turns);
+      setFilterTool(null);
+      setDetailLoading(false);
+      return;
+    }
     let cancelled = false;
     setDetailLoading(true);
     Promise.all([getSession(activeId), getSessionTurns(activeId)])
       .then(([detail, t]) => {
         if (cancelled) return;
-        setActiveSession(detail.session);
-        setToolCounts(detail.tool_counts);
-        setTurns(t.turns);
+        const bundle: SessionDetailBundle = {
+          session: detail.session,
+          toolCounts: detail.tool_counts,
+          turns: t.turns,
+        };
+        detailCacheRef.current.set(activeId, bundle);
+        setActiveSession(bundle.session);
+        setToolCounts(bundle.toolCounts);
+        setTurns(bundle.turns);
         setFilterTool(null);
       })
       .catch((e) => {
@@ -91,16 +141,14 @@ export function App() {
         document.getElementById('tb-search')?.focus();
         return;
       }
-      if (!sessions.length) return;
-      const i = sessions.findIndex((s) => s.session_id === activeId);
-      if (e.key === 'j' && i >= 0 && i < sessions.length - 1) setActiveId(sessions[i + 1]!.session_id);
-      if (e.key === 'k' && i > 0) setActiveId(sessions[i - 1]!.session_id);
+      if (!filteredSessions.length) return;
+      const i = filteredSessions.findIndex((s) => s.session_id === activeId);
+      if (e.key === 'j' && i >= 0 && i < filteredSessions.length - 1) setActiveId(filteredSessions[i + 1]!.session_id);
+      if (e.key === 'k' && i > 0) setActiveId(filteredSessions[i - 1]!.session_id);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [sessions, activeId]);
-
-  const filteredSessions = useMemo(() => sessions, [sessions]);
+  }, [filteredSessions, activeId]);
 
   return (
     <div className="tb-app">

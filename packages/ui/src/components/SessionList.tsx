@@ -34,12 +34,8 @@ interface Props {
   sessions: Session[];
   activeId: string | null;
   setActiveId: (id: string) => void;
-  /**
-   * Called when a user clicks the "N err" badge on a session card. Receives
-   * the session_id so the parent can (a) activate that session and (b) queue
-   * an error-navigation intent that fires after turns load. Always provided —
-   * works on inactive cards too.
-   */
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
   onErrorClick?: (sessionId: string) => void;
 }
 
@@ -47,17 +43,71 @@ const HARNESS_COLOR: Record<Harness, string> = {
   claude_code: 'var(--harness-cc)',
   opencode: 'var(--harness-ad)',
   codex: 'var(--harness-cx)',
-  cursor: 'var(--mute-strong)',
+  cursor: 'var(--harness-cu)',
 };
 
-export function SessionList({ sessions, activeId, setActiveId, onErrorClick }: Props) {
+export function SessionList({
+  sessions,
+  activeId,
+  setActiveId,
+  collapsed,
+  onToggleCollapsed,
+  onErrorClick,
+}: Props) {
   const projects = useMemo(() => summarizeProjects(sessions), [sessions]);
+  const activeSession = sessions.find((s) => s.session_id === activeId);
+
+  if (collapsed) {
+    return (
+      <aside className="tb-pane tb-pane-left" data-collapsed="1">
+        <div className="tb-pane-head tb-pane-head-collapsed">
+          <button
+            type="button"
+            className="tb-pane-toggle"
+            onClick={onToggleCollapsed}
+            title="Show sessions"
+            aria-label="Show sessions panel"
+            aria-expanded={false}
+          >
+            <Icons.Chevron dir="right" size={14} />
+          </button>
+        </div>
+        <button
+          type="button"
+          className="tb-pane-collapsed-rail"
+          onClick={onToggleCollapsed}
+          title="Show sessions"
+          aria-label={`Show sessions panel (${sessions.length} sessions)`}
+        >
+          <span className="tb-pane-collapsed-count">{sessions.length}</span>
+          <span className="tb-pane-collapsed-label">Sessions</span>
+          {activeSession && (
+            <span
+              className="tb-pane-collapsed-dot"
+              style={{ background: HARNESS_COLOR[activeSession.harness] ?? 'var(--mute-strong)' }}
+              title={activeSession.title ?? activeSession.session_id}
+            />
+          )}
+        </button>
+      </aside>
+    );
+  }
 
   return (
-    <aside className="tb-pane tb-pane-left">
+    <aside className="tb-pane tb-pane-left" data-collapsed="0">
       <div className="tb-pane-head">
         <span>Sessions</span>
         <span className="tb-pane-count">{sessions.length}</span>
+        <button
+          type="button"
+          className="tb-pane-toggle"
+          onClick={onToggleCollapsed}
+          title="Hide sessions"
+          aria-label="Hide sessions panel"
+          aria-expanded={true}
+        >
+          <Icons.Chevron dir="left" size={14} />
+        </button>
       </div>
 
       {projects.length > 0 && (
@@ -128,9 +178,6 @@ function SessionCard({
                 <button
                   className="tb-sess-err tb-sess-err-btn"
                   onClick={(e) => {
-                    // Don't let the click bubble up to the card button (which
-                    // would also activate the session, racing the explicit
-                    // handler). We activate + queue navigation here.
                     e.stopPropagation();
                     onErrorClick(session.session_id);
                   }}

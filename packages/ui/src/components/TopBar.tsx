@@ -15,7 +15,7 @@ const HARNESSES: { id: Harness | 'all'; label: string; live: boolean }[] = [
   { id: 'claude_code', label: 'Claude Code', live: true },
   { id: 'codex', label: 'Codex', live: true },
   { id: 'opencode', label: 'OpenCode', live: false },
-  { id: 'cursor', label: 'Cursor', live: false },
+  { id: 'cursor', label: 'Cursor', live: true },
 ];
 
 export function TopBar({ search, setSearch, filterHarness, setFilterHarness, sessions }: Props) {

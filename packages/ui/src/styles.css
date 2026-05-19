@@ -8,6 +8,7 @@
   --harness-cc: #c4b5fd;
   --harness-cx: #fbbf24;
   --harness-ad: #f0abfc;
+  --harness-cu: #7dd3fc;
 
   /* dark (default) */
   --bg: oklch(0.18 0.005 250);
@@ -66,6 +67,7 @@
   --harness-cc: oklch(0.55 0.18 290);
   --harness-cx: oklch(0.68 0.15 75);
   --harness-ad: oklch(0.62 0.18 330);
+  --harness-cu: oklch(0.72 0.12 220);
 
   --diff-add-bg: oklch(0.92 0.08 150 / 0.45);
   --diff-add-fg: oklch(0.35 0.12 150);
@@ -106,7 +108,7 @@ html, body {
 
 .tb-app {
   display: grid;
-  grid-template-rows: 44px 1fr;
+  grid-template-rows: auto 1fr;
   height: 100vh;
   background: var(--bg);
 }
@@ -115,17 +117,25 @@ html, body {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr) 340px;
   min-height: 0;
+  overflow: hidden;
+}
+
+/* Grid children default to min-width:auto, which lets long titles blow out the layout. */
+.tb-cols > * {
+  min-width: 0;
 }
 
 /* ── Top bar ─────────────────────────────────────────────────────────────── */
 
 .tb-top {
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr) auto;
+  grid-template-columns: 280px minmax(0, 1fr) minmax(0, 340px);
   align-items: center;
   border-bottom: 1px solid var(--border);
   background: var(--bg);
-  padding-right: 12px;
+  min-width: 0;
+  min-height: 44px;
+  padding-block: 6px;
 }
 
 .tb-brand {
@@ -157,7 +167,7 @@ html, body {
   display: flex;
   align-items: center;
   padding: 0 12px;
-  max-width: 480px;
+  min-width: 0;
   width: 100%;
 }
 .tb-search-icon {
@@ -186,6 +196,7 @@ html, body {
 .tb-kbd-hint {
   position: absolute;
   right: 20px;
+  pointer-events: none;
 }
 kbd {
   display: inline-flex;
@@ -204,16 +215,29 @@ kbd {
 .tb-top-right {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
+  padding: 0 12px;
+  min-width: 0;
 }
 
 .tb-harness-tabs {
   display: flex;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
   gap: 2px;
   padding: 2px;
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.tb-harness-tabs::-webkit-scrollbar {
+  height: 4px;
 }
 .tb-harness-tab {
   appearance: none;
@@ -295,12 +319,16 @@ kbd {
   background: var(--bg);
 }
 .tb-pane-left { border-right: 1px solid var(--border); }
-.tb-pane-right { border-left: 1px solid var(--border); background: var(--bg-elev); }
+.tb-pane-right {
+  border-left: 1px solid var(--border);
+  background: var(--bg-elev);
+}
 
 .tb-pane-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   height: 32px;
   padding: 0 14px;
   border-bottom: 1px solid var(--border-soft);
@@ -310,6 +338,82 @@ kbd {
   text-transform: uppercase;
   color: var(--text-mute);
   flex-shrink: 0;
+}
+.tb-pane-head-collapsed {
+  justify-content: center;
+  padding: 0 8px;
+}
+.tb-pane-toggle {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-mute);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.tb-pane-toggle:hover {
+  background: var(--bg-elev);
+  color: var(--text);
+}
+.tb-pane-collapsed-rail {
+  appearance: none;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--text-mute);
+  cursor: pointer;
+  font: inherit;
+}
+.tb-pane-collapsed-rail:hover {
+  background: var(--bg-elev);
+  color: var(--text);
+}
+.tb-pane-collapsed-count {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-soft);
+}
+.tb-pane-collapsed-label {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.tb-pane-collapsed-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Collapsed sessions column width */
+.tb-app[data-sessions-collapsed='1'] .tb-cols {
+  grid-template-columns: 52px minmax(0, 1fr) minmax(0, 340px);
+}
+.tb-app[data-sessions-collapsed='1'] .tb-top {
+  grid-template-columns: 52px minmax(0, 1fr) minmax(0, 340px);
 }
 .tb-pane-count {
   font-family: 'Geist Mono', ui-monospace, monospace;
@@ -506,6 +610,8 @@ kbd {
 
 .tb-pane-center {
   background: var(--bg);
+  /* Traces are the primary surface — never shrink below usability. */
+  min-width: min(360px, 100%);
 }
 
 .tb-sess-head {
@@ -518,15 +624,22 @@ kbd {
   align-items: baseline;
   gap: 12px;
   margin-bottom: 8px;
+  min-width: 0;
 }
 .tb-sess-head-title {
+  flex: 1;
+  min-width: 0;
   font-size: 17px;
   font-weight: 600;
   margin: 0;
   letter-spacing: -0.01em;
   color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .tb-sess-head-id {
+  flex-shrink: 0;
   font-family: 'Geist Mono', monospace;
   font-size: 11px;
   color: var(--text-faint);
@@ -541,9 +654,13 @@ kbd {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  max-width: 100%;
   font-family: 'Geist Mono', monospace;
   font-size: 11px;
   color: var(--text-mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tb-tool-filter {
@@ -597,8 +714,9 @@ kbd {
 
 .tb-turn-group {
   display: grid;
-  grid-template-columns: 56px 1fr;
+  grid-template-columns: 56px minmax(0, 1fr);
   margin-bottom: 4px;
+  min-width: 0;
 }
 .tb-turn-rail {
   display: flex;
@@ -671,6 +789,10 @@ kbd {
   line-height: 1.55;
   color: var(--text);
   text-wrap: pretty;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
+  white-space: pre-wrap;
 }
 
 /* ── Tool calls ──────────────────────────────────────────────────────────── */
@@ -1144,3 +1266,98 @@ kbd {
 [data-density="compact"] .tb-rail-section { padding: 10px 14px; }
 [data-density="compact"] .tb-sess { padding: 6px 8px; }
 [data-density="compact"] .tb-sess-title { font-size: 12px; }
+
+/* ── Responsive: traces are primary; analytics when there's room ─────────── */
+
+@media (max-width: 1080px) {
+  .tb-cols {
+    grid-template-columns: minmax(200px, 240px) minmax(0, 1fr);
+  }
+  .tb-app[data-sessions-collapsed='1'] .tb-cols {
+    grid-template-columns: 52px minmax(0, 1fr);
+  }
+  .tb-top {
+    grid-template-columns: minmax(200px, 240px) minmax(0, 1fr);
+  }
+  .tb-app[data-sessions-collapsed='1'] .tb-top {
+    grid-template-columns: 52px minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    gap: 8px 12px;
+    padding: 8px 12px;
+  }
+  .tb-brand {
+    grid-column: 1;
+    grid-row: 1;
+    border-right: none;
+    padding: 0;
+    height: auto;
+  }
+  .tb-top-right {
+    grid-column: 2;
+    grid-row: 1;
+    padding: 0;
+    justify-content: flex-end;
+  }
+  .tb-search-wrap {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    padding: 0;
+  }
+  /* Analytics is supplementary — hide before squeezing the trace timeline. */
+  .tb-pane-right {
+    display: none;
+  }
+  .tb-kbd-hint {
+    display: none;
+  }
+  .tb-status-pill,
+  .tb-divider {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .tb-cols {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 38vh) minmax(0, 1fr);
+  }
+  .tb-app[data-sessions-collapsed='1'] .tb-cols {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .tb-pane-left {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .tb-pane-left[data-collapsed='1'] {
+    max-height: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .tb-pane-left[data-collapsed='1'] .tb-pane-collapsed-rail {
+    flex-direction: row;
+    justify-content: center;
+    padding: 8px 12px;
+    gap: 12px;
+  }
+  .tb-pane-left[data-collapsed='1'] .tb-pane-collapsed-label {
+    writing-mode: horizontal-tb;
+    transform: none;
+  }
+  .tb-top {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+  }
+  .tb-brand {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .tb-top-right {
+    grid-column: 1;
+    grid-row: 2;
+    justify-content: flex-start;
+  }
+  .tb-search-wrap {
+    grid-column: 1;
+    grid-row: 3;
+  }
+}

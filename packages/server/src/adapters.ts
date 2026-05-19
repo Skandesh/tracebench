@@ -11,6 +11,7 @@
 
 import * as claudeCode from '@tracebench/adapter-claude-code';
 import * as codex from '@tracebench/adapter-codex';
+import * as cursor from '@tracebench/adapter-cursor';
 import type { CanonicalEvent, Harness, Session } from '@tracebench/core';
 
 export interface AdapterDiscovered {
@@ -49,7 +50,21 @@ const codexAdapter: AdapterModule = {
   load: (p) => codex.loadSession(p),
 };
 
-export const ADAPTERS: AdapterModule[] = [claudeCodeAdapter, codexAdapter];
+const cursorAdapter: AdapterModule = {
+  harness: 'cursor',
+  formatVersion: cursor.FORMAT_VERSION,
+  defaultRoot: cursor.defaultProjectsRoot,
+  discover: (root) =>
+    cursor.discoverSessions(root).map((d) => ({
+      session_id: d.session_id,
+      file_path: d.file_path,
+      mtime_ms: d.mtime_ms,
+      size: d.size,
+    })),
+  load: (p) => cursor.loadSession(p),
+};
+
+export const ADAPTERS: AdapterModule[] = [claudeCodeAdapter, codexAdapter, cursorAdapter];
 
 export function adapterByHarness(name: Harness): AdapterModule | undefined {
   return ADAPTERS.find((a) => a.harness === name);

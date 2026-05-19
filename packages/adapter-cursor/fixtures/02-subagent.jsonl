@@ -1,0 +1,2 @@
+{"role":"user","message":{"content":[{"type":"text","text":"<user_query>\nExplore the repo structure\n</user_query>"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"Launching a subagent."},{"type":"tool_use","name":"Task","input":{"description":"Explore repo","prompt":"List top-level dirs"}}]}}

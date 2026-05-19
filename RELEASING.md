@@ -2,7 +2,7 @@
 
 Maintainer-only. Users don't need this — see [README.md](./README.md) instead.
 
-`pnpm release <version>` ships a new version of tracebench end-to-end. It bumps all four packages atomically, promotes the changelog, publishes to npm, commits, tags, pushes, and creates a GitHub release.
+`pnpm release <version>` ships a new version of tracebench end-to-end. It bumps all five publishable packages atomically, promotes the changelog, publishes to npm, commits, tags, pushes, and creates a GitHub release.
 
 ## TL;DR
 
@@ -52,10 +52,10 @@ The script will:
 
 1. Check the working tree is clean.
 2. Promote `## [Unreleased]` → `## [0.1.4] — 2026-MM-DD` in `CHANGELOG.md`. A fresh empty `[Unreleased]` is left at the top for next time.
-3. Bump the version on every package — `@tracebench/core`, `@tracebench/adapter-claude-code`, `@tracebench/adapter-codex`, and `tracebench` — keeping them locked together.
+3. Bump the version on every package — `@tracebench/core`, `@tracebench/adapter-claude-code`, `@tracebench/adapter-codex`, `@tracebench/adapter-cursor`, and `tracebench` — keeping them locked together.
 4. Run `pnpm install --lockfile-only` to keep the `workspace:*` resolutions consistent.
 5. `pnpm -r build && pnpm -r test`. Aborts on failure.
-6. `pnpm publish --access public --no-git-checks` for each package in dependency order: core → adapter-claude-code → adapter-codex → tracebench. The `tracebench` package's `prepack` script bundles the UI dist, README, LICENSE, and CHANGELOG into the tarball.
+6. `pnpm publish --access public --no-git-checks` for each package in dependency order: core → adapter-claude-code → adapter-codex → adapter-cursor → tracebench. The `tracebench` package's `prepack` script bundles the UI dist, README, LICENSE, and CHANGELOG into the tarball.
 7. `git commit -m "release: v0.1.4"`, `git tag v0.1.4`, push commit + tag.
 8. `gh release create v0.1.4 --notes-file …` using the new `[0.1.4]` section as the release body.
 

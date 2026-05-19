@@ -19,11 +19,11 @@ This is local, no cloud, no telemetry. Apache 2.0.
 
 |  |  |
 |---|---|
-| Adapters live | `claude_code`, `codex` |
-| Adapters planned | `opencode`, `cursor` (UI tabs present, disabled until adapters ship) |
+| Adapters live | `claude_code`, `codex`, `cursor` (Agent JSONL transcripts) |
+| Adapters planned | `opencode`; Cursor Composer SQLite (`state.vscdb`) for full chat history + tool results |
 | UI | Vite + React 18 — three-pane layout, tool-aware timeline (Bash/Read/Edit/Write/Grep + Codex `exec_command` and `apply_patch` aliases), analytics rail, harness tabs |
 | Backend | Fastify on `127.0.0.1`, SQLite via `better-sqlite3`, multi-adapter indexer |
-| Tests | 75 across 5 packages |
+| Tests | 80+ across 6 packages |
 
 For per-release changes see **[CHANGELOG.md](./CHANGELOG.md)**.
 
@@ -35,7 +35,7 @@ npx tracebench
 
 That's it. Opens at **http://127.0.0.1:3478**.
 
-On first run it indexes everything under `~/.claude/projects` and `~/.codex/sessions`, then keeps an SQLite cache at `~/.tracebench/tracebench.db` so subsequent boots are near-instant.
+On first run it indexes everything under `~/.claude/projects`, `~/.codex/sessions`, and `~/.cursor/projects/**/agent-transcripts`, then keeps an SQLite cache at `~/.tracebench/tracebench.db` so subsequent boots are near-instant.
 
 ### Flags
 
@@ -45,6 +45,7 @@ On first run it indexes everything under `~/.claude/projects` and `~/.codex/sess
 | `--host <h>` | `127.0.0.1` | listen host |
 | `--dir <path>` (alias `--claude-dir`) | `~/.claude/projects` | Claude Code projects root |
 | `--codex-dir <path>` | `~/.codex` | Codex sessions root |
+| `--cursor-dir <path>` | `~/.cursor/projects` | Cursor agent-transcripts root |
 | `--db-path <path>` | `~/.tracebench/tracebench.db` | SQLite location |
 | `--no-open` | — | skip browser auto-launch |
 | `--no-index` | — | skip the startup re-index pass |
@@ -69,6 +70,7 @@ packages/
 ├── core/                       schema, SQLite + migrations, pricing, query API
 ├── adapter-claude-code/        reads ~/.claude/projects/**/*.jsonl, normalizes
 ├── adapter-codex/              reads ~/.codex/sessions + archived_sessions, normalizes
+├── adapter-cursor/             reads ~/.cursor/projects/**/agent-transcripts, normalizes
 ├── server/                     Fastify routes + CLI entry + multi-adapter indexer
 └── ui/                         Vite + React 18, ported from the prototype
 ```
@@ -94,7 +96,7 @@ cost_usd = input * input_per_token
 
 ### Indexer
 
-On startup, the server walks `~/.claude/projects` and indexes any session whose mtime is newer than the one in SQLite. Re-index is cheap (~1ms per session in the skip path) so it runs every boot. Trigger a manual re-index with `POST /api/reindex`.
+On startup, the server walks each adapter root (Claude Code, Codex, Cursor) and indexes any session whose mtime is newer than the one in SQLite. Re-index is cheap (~1ms per session in the skip path) so it runs every boot. Trigger a manual re-index with `POST /api/reindex`.
 
 ## API
 
@@ -116,7 +118,8 @@ tracebench/
 │   ├── core/                          @tracebench/core
 │   ├── adapter-claude-code/           @tracebench/adapter-claude-code
 │   ├── adapter-codex/                 @tracebench/adapter-codex
-│   ├── server/                        @tracebench/server (publishes `tracebench` bin)
+│   ├── adapter-cursor/                @tracebench/adapter-cursor
+│   ├── server/                        tracebench (npm bin)
 │   └── ui/                            @tracebench/ui
 ├── package.json
 ├── pnpm-workspace.yaml

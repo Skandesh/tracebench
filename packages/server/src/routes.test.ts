@@ -20,6 +20,13 @@ const CODEX_FIXTURES = join(
   'adapter-codex',
   'fixtures',
 );
+const CURSOR_FIXTURES = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  'adapter-cursor',
+  'fixtures',
+);
 
 import { mkdtempSync, writeFileSync, readFileSync, readdirSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -27,6 +34,7 @@ import { tmpdir } from 'node:os';
 let server: BuiltServer;
 let ccRoot: string;
 let codexRoot: string;
+let cursorRoot: string;
 
 beforeAll(async () => {
   // Claude Code root layout: <root>/<encoded-project>/<session>.jsonl
@@ -55,10 +63,31 @@ beforeAll(async () => {
     writeFileSync(join(codexDay, target), readFileSync(join(CODEX_FIXTURES, f)));
   });
 
+  cursorRoot = mkdtempSync(join(tmpdir(), 'tracebench-cursor-'));
+  const cursorProj = join(cursorRoot, 'Users-fixtures');
+  const mainTranscript = join(
+    cursorProj,
+    'agent-transcripts',
+    'aaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+    'aaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jsonl',
+  );
+  const subTranscript = join(
+    cursorProj,
+    'agent-transcripts',
+    'parent-uuid',
+    'subagents',
+    'child-uuid.jsonl',
+  );
+  mkdirSync(dirname(mainTranscript), { recursive: true });
+  mkdirSync(dirname(subTranscript), { recursive: true });
+  writeFileSync(mainTranscript, readFileSync(join(CURSOR_FIXTURES, '01-simple.jsonl')));
+  writeFileSync(subTranscript, readFileSync(join(CURSOR_FIXTURES, '02-subagent.jsonl')));
+
   server = await buildServer({
     dbPath: ':memory:',
     projectsRoot: ccRoot,
     codexRoot,
+    cursorRoot,
     verbose: false,
   });
   await server.app.ready();
@@ -81,12 +110,13 @@ describe('GET /api/sessions', () => {
     const res = await server.app.inject({ method: 'GET', url: '/api/sessions' });
     expect(res.statusCode).toBe(200);
     const body = res.json() as { sessions: Array<{ session_id: string; harness: string; aggregates: { tool_call_count: number } }> };
-    expect(body.sessions.length).toBe(6); // three CC + three Codex fixtures
+    expect(body.sessions.length).toBe(8); // three CC + three Codex + two Cursor fixtures
     expect(body.sessions.every((s) => 'aggregates' in s)).toBe(true);
     const byHarness: Record<string, number> = {};
     for (const s of body.sessions) byHarness[s.harness] = (byHarness[s.harness] ?? 0) + 1;
     expect(byHarness.claude_code).toBe(3);
     expect(byHarness.codex).toBe(3);
+    expect(byHarness.cursor).toBe(2);
   });
 
   it('filters by harness=claude_code', async () => {
@@ -117,12 +147,13 @@ describe('GET /api/sessions', () => {
     expect(body.sessions.some((s) => /race/i.test(s.title))).toBe(true);
   });
 
-  it('filters out unsupported harnesses', async () => {
+  it('filters by harness=cursor', async () => {
     const res = await server.app.inject({
       method: 'GET',
       url: '/api/sessions?harness=cursor',
     });
-    expect((res.json() as { sessions: unknown[] }).sessions.length).toBe(0);
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { sessions: unknown[] }).sessions.length).toBe(2);
   });
 });
 
@@ -191,12 +222,13 @@ describe('POST /api/reindex', () => {
       skipped: number;
       per_harness: Record<string, { scanned: number; skipped: number; indexed: number }>;
     };
-    expect(body.scanned).toBe(6);
+    expect(body.scanned).toBe(8);
     // After the initial index, mtimes haven't changed → all skipped
-    expect(body.skipped).toBe(6);
+    expect(body.skipped).toBe(8);
     expect(body.indexed).toBe(0);
     expect(body.per_harness.claude_code).toEqual({ scanned: 3, indexed: 0, skipped: 3 });
     expect(body.per_harness.codex).toEqual({ scanned: 3, indexed: 0, skipped: 3 });
+    expect(body.per_harness.cursor).toEqual({ scanned: 2, indexed: 0, skipped: 2 });
   });
 });
 

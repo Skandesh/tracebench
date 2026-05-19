@@ -7,8 +7,16 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
 ## [Unreleased]
 
 ### Added
-- `RELEASING.md` — maintainer-facing doc for the `pnpm release` workflow (versioning policy, prerequisites, recovery, anti-patterns). README links to it.
-- `CLAUDE.md` — guidance for Claude Code sessions in this repo: architecture invariants (canonical schema, precomputed aggregates, client-side filter, service-layer split), commands, release workflow, gotchas, and an explicit "don't add" list.
+- **`@tracebench/adapter-cursor`** — indexes Cursor Agent transcripts from `~/.cursor/projects/**/agent-transcripts/**/*.jsonl` (nested sessions and `subagents/` as separate sessions). Cursor harness tab is live.
+- **`--cursor-dir <path>`** CLI flag (default `~/.cursor/projects`).
+- **Collapsible sessions sidebar** — chevron toggle; preference persisted in `localStorage`.
+
+### Changed
+- **Responsive layout** — trace timeline stays primary on narrow windows; analytics rail hides below ~1080px; harness tabs scroll instead of clipping.
+- **Session header / messages** — truncation and grid `min-width` fixes so titles and user text no longer blow out the layout.
+
+### Notes
+- Cursor JSONL exports have no `tool_result` lines or token usage yet; tool calls show input only. Composer SQLite (`state.vscdb`) is planned for richer metadata.
 
 ## [0.1.3] — 2026-05-19
 ### Changed

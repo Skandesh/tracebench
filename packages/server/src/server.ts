@@ -19,6 +19,8 @@ export interface ServerOptions {
   projectsRoot?: string;
   /** Codex sessions root. Defaults to ~/.codex */
   codexRoot?: string;
+  /** Cursor projects root. Defaults to ~/.cursor/projects */
+  cursorRoot?: string;
   /** Skip the startup index pass. */
   noIndex?: boolean;
   /** Verbose stderr logging. */
@@ -58,6 +60,7 @@ export async function buildServer(opts: ServerOptions = {}): Promise<BuiltServer
   const roots = {
     claude_code: opts.projectsRoot,
     codex: opts.codexRoot,
+    cursor: opts.cursorRoot,
   } as const;
 
   await registerRoutes(app, { db, roots });
@@ -85,6 +88,7 @@ export async function buildServer(opts: ServerOptions = {}): Promise<BuiltServer
       roots: {
         claude_code: opts.projectsRoot,
         codex: opts.codexRoot,
+        cursor: opts.cursorRoot,
       },
       verbose: opts.verbose,
     });

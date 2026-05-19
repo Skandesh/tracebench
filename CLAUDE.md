@@ -15,11 +15,12 @@ packages/
 ├── core/                       schema, SQLite + migrations, pricing, query API
 ├── adapter-claude-code/        reads ~/.claude/projects/**/*.jsonl
 ├── adapter-codex/              reads ~/.codex/sessions + archived_sessions
+├── adapter-cursor/             reads ~/.cursor/projects/**/agent-transcripts
 ├── server/                     Fastify + multi-adapter indexer + CLI (publishes as `tracebench`)
 └── ui/                         Vite + React 18 (bundled into the server tarball at publish time)
 ```
 
-All four publishable packages (`@tracebench/core`, `@tracebench/adapter-claude-code`, `@tracebench/adapter-codex`, `tracebench`) ship together at the same version. `@tracebench/ui` is private — it's bundled into the `tracebench` tarball via `packages/server/scripts/prepack.mjs`.
+All five publishable packages (`@tracebench/core`, `@tracebench/adapter-claude-code`, `@tracebench/adapter-codex`, `@tracebench/adapter-cursor`, `tracebench`) ship together at the same version. `@tracebench/ui` is private — it's bundled into the `tracebench` tarball via `packages/server/scripts/prepack.mjs`.
 
 The adapter registry lives in `packages/server/src/adapters.ts`. To add a new harness, write an adapter package implementing the discover/parse/normalize trio and add one entry to that file. Dynamic plugin loading is a v0.5+ task — don't add it yet.
 
@@ -103,7 +104,7 @@ This:
 3. Bumps all 4 `package.json` files to the same version.
 4. `pnpm install --lockfile-only` so workspace deps re-resolve.
 5. `pnpm -r build && pnpm -r test`.
-6. Publishes all 4 packages in dep order: core → adapter-claude-code → adapter-codex → tracebench.
+6. Publishes all 5 packages in dep order: core → adapter-claude-code → adapter-codex → adapter-cursor → tracebench.
 7. Commits as `release: vX.Y.Z`, tags, pushes.
 8. Creates the GitHub release using the new CHANGELOG section as the body.
 

@@ -29,6 +29,7 @@ const PACKAGES = [
   'packages/core/package.json',
   'packages/adapter-claude-code/package.json',
   'packages/adapter-codex/package.json',
+  'packages/adapter-cursor/package.json',
   'packages/server/package.json',
 ];
 
@@ -142,6 +143,7 @@ const publishOrder = [
   'packages/core',
   'packages/adapter-claude-code',
   'packages/adapter-codex',
+  'packages/adapter-cursor',
   'packages/server', // publishes as `tracebench`
 ];
 for (const dir of publishOrder) {

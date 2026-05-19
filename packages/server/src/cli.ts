@@ -19,6 +19,7 @@ interface CliArgs {
   host: string;
   dir?: string;
   codexDir?: string;
+  cursorDir?: string;
   dbPath?: string;
   open: boolean;
   index: boolean;
@@ -48,6 +49,7 @@ function parseArgs(argv: string[]): CliArgs {
       case '--dir':
       case '--claude-dir': a.dir = next(); break;
       case '--codex-dir': a.codexDir = next(); break;
+      case '--cursor-dir': a.cursorDir = next(); break;
       case '--db-path': a.dbPath = next(); break;
       case '--no-open': a.open = false; break;
       case '--no-index': a.index = false; break;
@@ -76,6 +78,7 @@ Usage: tracebench [flags]
   --dir <path>        Claude Code projects dir (default ~/.claude/projects)
                       alias: --claude-dir
   --codex-dir <path>  Codex sessions dir (default ~/.codex)
+  --cursor-dir <path> Cursor projects dir (default ~/.cursor/projects)
   --db-path <path>    SQLite file (default ~/.tracebench/tracebench.db)
   --no-open           don't auto-open the browser
   --no-index          skip startup index pass
@@ -113,6 +116,7 @@ async function main(): Promise<void> {
     dbPath: args.dbPath,
     projectsRoot: args.dir,
     codexRoot: args.codexDir,
+    cursorRoot: args.cursorDir,
     noIndex: !args.index,
     verbose: args.verbose,
   });

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Harness, Session, ToolCount, Turn } from './types';
 import { listSessions, getSession, getSessionTurns } from './api';
 import { useErrorNavigation } from './hooks/useErrorNavigation';
+import { useSessionsPaneCollapsed } from './hooks/useSessionsPaneCollapsed';
 import { TopBar } from './components/TopBar';
 import { SessionList } from './components/SessionList';
 import { Timeline } from './components/Timeline';
@@ -32,6 +33,7 @@ export function App() {
   // active one, scrolling to it, and resolving the cross-session "switch +
   // jump" intent — live in this hook. App just decides when to invoke it.
   const errNav = useErrorNavigation({ turns, activeId, detailLoading, setActiveId });
+  const { collapsed: sessionsCollapsed, toggle: toggleSessionsPane } = useSessionsPaneCollapsed();
 
   // One initial fetch of *all* sessions, no harness filter. Filter + search
   // happen in-memory below so switching tabs is instant and tab counts are
@@ -151,7 +153,7 @@ export function App() {
   }, [filteredSessions, activeId]);
 
   return (
-    <div className="tb-app">
+    <div className="tb-app" data-sessions-collapsed={sessionsCollapsed ? '1' : '0'}>
       <TopBar
         search={search}
         setSearch={setSearch}
@@ -165,6 +167,8 @@ export function App() {
           activeId={activeId}
           setActiveId={setActiveId}
           onErrorClick={errNav.navigateForSession}
+          collapsed={sessionsCollapsed}
+          onToggleCollapsed={toggleSessionsPane}
         />
         {sessionsError ? (
           <section className="tb-pane tb-pane-center"><div className="tb-empty">Error: {sessionsError}</div></section>

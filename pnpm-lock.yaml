@@ -30,6 +30,12 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/adapter-cursor:
+    dependencies:
+      '@tracebench/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/core:
     dependencies:
       better-sqlite3:
@@ -51,6 +57,9 @@ importers:
       '@tracebench/adapter-codex':
         specifier: workspace:*
         version: link:../adapter-codex
+      '@tracebench/adapter-cursor':
+        specifier: workspace:*
+        version: link:../adapter-cursor
       '@tracebench/core':
         specifier: workspace:*
         version: link:../core

@@ -6,6 +6,7 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-05-19
 ### Added
 - **`@tracebench/adapter-cursor`** — indexes Cursor Agent transcripts from `~/.cursor/projects/**/agent-transcripts/**/*.jsonl` (nested sessions and `subagents/` as separate sessions). Cursor harness tab is live.
 - **`--cursor-dir <path>`** CLI flag (default `~/.cursor/projects`).

@@ -1,0 +1,83 @@
+# Changelog
+
+All notable changes to tracebench are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow [SemVer](https://semver.org/).
+
+## [0.1.2] — 2026-05-19
+
+The "made it fast" release. `/api/sessions` went from ~5.8 s to ~3 ms on a 321-session directory.
+
+### Changed
+- **Precomputed session aggregates.** The indexer now summarizes each session's events once at write time (cost, tokens, duration, turn count, tool calls, errors) and stores the totals on the `sessions` row. `/api/sessions` is a pure `SELECT` — no GROUP BY across the events table.
+- **Filter + search now client-side.** The UI fetches all sessions once on mount and applies harness/text filtering in memory. Switching harness tabs is instant — no refetch.
+- **Default API limit 200 → 5000.** A normal user's whole directory comes back in one request.
+- **Highlight pulse 2 s → 1.2 s** on click-to-navigate; matched between CSS and the JS auto-clear.
+- **Server prefers the workspace UI bundle over a stale prepack artifact** when both exist (was the other way around).
+
+### Added
+- **Click-to-navigate tool-call errors.** Click "N err" on any session card (active or inactive) or "N errors" at the timeline end — the timeline scrolls to the next errored tool call and pulses a highlight. Cycles through all errors on repeat clicks.
+- **Tokens/turn and Tokens/tool metrics** in the Analytics rail (compact format: `12.3k`, `1.5M`).
+- **`@tracebench/core` exports** `summarizeEvents()` for downstream consumers.
+- **Database migration v2** adds the aggregate columns: `total_cost_usd`, `total_input_tokens`, `total_output_tokens`, `total_cache_read_tokens`, `total_cache_create_tokens`, `total_reasoning_tokens`, `duration_ms`, `turn_count`, `tool_call_count`, `tool_error_count`, `message_count`. Existing DBs migrate on next boot.
+- **In-memory session-detail cache** in the UI. Re-clicking a session you've already viewed skips the network entirely.
+- **`prefers-reduced-motion` guard** on the tool-call highlight animation.
+- **`useDisclosure` hook** for tool-call open/close state (was duplicated across 6 renderers).
+- **`useErrorNavigation` hook** owning the find-errors / cycle / scroll-with-retry / cross-session "switch + jump" capability.
+- **`selectors.ts`** with pure `indexToolResultsByCall` and `findErrorToolCallIds` — single source of truth for tool-result pairing.
+
+### Fixed
+- **Harness tab counts no longer go to 0** for inactive harnesses when a filter is active. They're computed from the unfiltered list now.
+- **"N err" badge on inactive session cards** is now clickable and switches the active session **and** jumps to errors. Previously it was a no-op and also blocked the card's own click via `stopPropagation`.
+- **Tokens-per-* labeling.** What used to be "Tokens/request" was actually tokens-per-turn (one turn can trigger many API calls) and excluded cache reads (~90% of input on Claude Code). Renamed to "Tokens/turn" and includes cache tokens.
+- **Scroll-to-error race condition.** When clicking a session for the first time, the target element may not exist on the first paint. The scroll now retries via `requestAnimationFrame` for up to 10 frames.
+- **Session-card layout** — error badge no longer overlaps the timestamp; stats row wraps cleanly on narrow widths.
+
+### Refactored
+- **`ToolShell` wrapper component + `useHighlightAutoClear` hook** absorb the cross-cutting concerns from the six tool renderers (Bash, Read, Edit, Write, Grep, Generic). Each renderer is now body-only.
+- **CSS `--color-error` / `--color-error-hover` custom properties** replace 5 inline `oklch()` literals.
+- **`App.tsx` shrunk 245 → 149 lines.** All error-nav mechanics moved into `useErrorNavigation`.
+
+### Performance (measured against 321 real sessions / 175k events)
+| | before | after |
+|---|---|---|
+| `GET /api/sessions` (cold) | 5.8 s | 3 ms |
+| `GET /api/sessions` (warm) | 5.5 s | 3–7 ms |
+| Re-click cached session | full refetch (~500 ms+) | 39–192 ms (render only) |
+| Sessions visible in UI | 200 (capped) | all 321 |
+
+## [0.1.1] — 2026-05-18
+
+First public npm release.
+
+### Added
+- `npx tracebench` works from a clean machine. Single command install, runs the local web app.
+- Published to npm:
+  - [`tracebench`](https://www.npmjs.com/package/tracebench) — the CLI
+  - [`@tracebench/core`](https://www.npmjs.com/package/@tracebench/core)
+  - [`@tracebench/adapter-claude-code`](https://www.npmjs.com/package/@tracebench/adapter-claude-code)
+  - [`@tracebench/adapter-codex`](https://www.npmjs.com/package/@tracebench/adapter-codex)
+- Prepack script bundles the UI dist into the `tracebench` tarball so the published package is fully self-contained.
+
+### Changed
+- Internal `@tracebench/server` package renamed to **`tracebench`** so `npx tracebench` resolves directly.
+
+### Fixed
+- Pricing data refreshed from the upstream [LiteLLM JSON](https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json). Notable corrections: claude-opus-4.x was using Claude 3 Opus prices (off by 3×), gpt-5.5 was at half the real rate. Added gpt-5-mini/nano/pro, gpt-5.1.x, gpt-5.2.x, gpt-5.4.x, claude-opus-4-1, claude-3-7-sonnet.
+- Session-card error badge no longer overlaps the timestamp (was absolute-positioned at the same coordinates).
+- Right rail layout no longer clips at common viewport widths (`minmax(0, 1fr)` on the grid columns).
+
+## [0.1.0] — 2026-05-18 (un-published, version reserved on npm)
+
+Initial implementation. Bundled into 0.1.1 for the first public release.
+
+### Added
+- **`@tracebench/core`** — canonical event schema, SQLite + migrations, pricing engine, query API.
+- **`@tracebench/adapter-claude-code`** — discovers and normalizes `~/.claude/projects/**/*.jsonl`. Handles multi-block assistant messages, tool_use ↔ tool_result linkage, orphan results, compaction, malformed lines.
+- **`@tracebench/adapter-codex`** — discovers and normalizes `~/.codex/sessions/**/*.jsonl` and `~/.codex/archived_sessions/`. Maps `function_call` / `function_call_output` / `custom_tool_call` / `web_search_call` / `reasoning` to canonical events.
+- **`@tracebench/server`** — Fastify routes (`/api/sessions`, `/api/sessions/:id`, `/api/sessions/:id/turns`, `/api/sessions/:id/events`, `/api/pricing`, `POST /api/reindex`), multi-adapter indexer (`packages/server/src/adapters.ts`), incremental re-index by mtime, CLI entry with `--port`, `--dir`/`--claude-dir`, `--codex-dir`, `--db-path`, `--no-open`, `--no-index`, `-v`.
+- **`@tracebench/ui`** — Vite + React 18, three-pane layout, harness tabs, tool-aware timeline (Bash/Read/Edit/Write/Grep + Codex `exec_command` and `apply_patch` aliases), analytics rail (cost / duration / tokens / cache / context-window sparkline / tool mix / file churn), `j`/`k` nav, `/` to focus search.
+- **Pricing engine** — vendored LiteLLM-style JSON, `computeCost`, alias resolution with dated-suffix fallback.
+- **75 tests** across the four packages.
+
+[0.1.2]: https://github.com/Skandesh/tracebench/releases/tag/v0.1.2
+[0.1.1]: https://github.com/Skandesh/tracebench/releases/tag/v0.1.1
+[0.1.0]: https://github.com/Skandesh/tracebench/releases/tag/v0.1.1

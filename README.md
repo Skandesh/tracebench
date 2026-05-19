@@ -145,6 +145,10 @@ pnpm --filter @tracebench/server start
 pnpm --filter @tracebench/ui dev
 ```
 
+## Changelog
+
+See [CHANGELOG.md](./CHANGELOG.md).
+
 ## Roadmap
 
 - **v0.1 (current)** — Claude Code + Codex adapters, multi-adapter indexer, cross-harness UI

@@ -16,7 +16,7 @@
   "bin": {
     "tracebench": "./dist/cli.js"
   },
-  "files": ["dist", "ui", "README.md", "LICENSE"],
+  "files": ["dist", "ui", "README.md", "LICENSE", "CHANGELOG.md"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/cli.ts",

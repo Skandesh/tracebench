@@ -15,18 +15,17 @@ This is local, no cloud, no telemetry. Apache 2.0.
 
 ![tracebench session viewer](./assets/screenshot.png)
 
-## Status — v0.1.1
+## What's in the box
 
-| | What |
+|  |  |
 |---|---|
 | Adapters live | `claude_code`, `codex` |
-| Adapters planned | `opencode`, `cursor` (UI tabs present but disabled) |
+| Adapters planned | `opencode`, `cursor` (UI tabs present, disabled until adapters ship) |
 | UI | Vite + React 18 — three-pane layout, tool-aware timeline (Bash/Read/Edit/Write/Grep + Codex `exec_command` and `apply_patch` aliases), analytics rail, harness tabs |
 | Backend | Fastify on `127.0.0.1`, SQLite via `better-sqlite3`, multi-adapter indexer |
-| Tests | **75 passing** across 5 packages (core 26, adapter-claude-code 17, adapter-codex 19, server 13, ui typecheck-only) |
-| Real-world | Indexes **44 Claude Code + 276 Codex** sessions on the maintainer's machine; cumulative cost surfaced ≈ $3k |
-| Performance | 44-session Claude Code dir: ~370ms; full mixed index of 320 sessions stays well under acceptance |
-| **Not done** | Plugin loader (adapters still in-tree, registered in `packages/server/src/adapters.ts`), public adapter authoring guide, Windows support, OpenCode/Cursor adapters |
+| Tests | 75 across 5 packages |
+
+For per-release changes see **[CHANGELOG.md](./CHANGELOG.md)**.
 
 ## Install
 

@@ -2,6 +2,17 @@
 
 All notable changes to tracebench are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow [SemVer](https://semver.org/).
 
+> **How releases work:** edit `[Unreleased]` below as you work. Running `pnpm release <version>` (see `scripts/release.mjs`) promotes it to a dated `[X.Y.Z]` section, bumps all package versions, publishes to npm, commits, tags, and creates a GitHub release with that section as the notes.
+
+## [Unreleased]
+
+### Changed
+- README dropped the version-pinned "Status" section; the changelog is now the source of truth for what shipped.
+
+### Added
+- `CHANGELOG.md` is bundled into the published `tracebench` tarball so the npm page can link to it.
+- `scripts/release.mjs` orchestrates the whole release: version bump → changelog promotion → build → publish → commit → tag → GitHub release.
+
 ## [0.1.2] — 2026-05-19
 
 The "made it fast" release. `/api/sessions` went from ~5.8 s to ~3 ms on a 321-session directory.

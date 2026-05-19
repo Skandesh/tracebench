@@ -24,4 +24,5 @@ tracebench-running.png
 packages/server/ui/
 packages/server/README.md
 packages/server/LICENSE
+packages/server/CHANGELOG.md
 *.tgz

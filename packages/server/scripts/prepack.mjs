@@ -37,16 +37,15 @@ mkdirSync(uiTarget, { recursive: true });
 cpSync(uiDist, uiTarget, { recursive: true });
 console.log('[prepack] copied UI dist →', uiTarget);
 
-// 3. Copy the repo README and LICENSE into this package so npmjs.com renders.
-const repoReadme = join(repoRoot, 'README.md');
-const repoLicense = join(repoRoot, 'LICENSE');
-if (existsSync(repoReadme)) {
-  cpSync(repoReadme, join(pkgRoot, 'README.md'));
-  console.log('[prepack] copied README.md');
-}
-if (existsSync(repoLicense)) {
-  cpSync(repoLicense, join(pkgRoot, 'LICENSE'));
-  console.log('[prepack] copied LICENSE');
+// 3. Copy the repo README, LICENSE, and CHANGELOG into this package so the
+//    npm page renders correctly and the [CHANGELOG.md] link in the README
+//    resolves inside the tarball as well.
+for (const name of ['README.md', 'LICENSE', 'CHANGELOG.md']) {
+  const src = join(repoRoot, name);
+  if (existsSync(src)) {
+    cpSync(src, join(pkgRoot, name));
+    console.log(`[prepack] copied ${name}`);
+  }
 }
 
 // 4. Sanity check: ensure dist/cli.js exists

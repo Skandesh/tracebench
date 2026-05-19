@@ -144,6 +144,10 @@ pnpm --filter @tracebench/server start
 pnpm --filter @tracebench/ui dev
 ```
 
+## Releasing
+
+Maintainers: `pnpm release <version>` bumps all 4 packages, promotes the changelog, publishes to npm, commits, tags, and creates the GitHub release. See [RELEASING.md](./RELEASING.md) for the full workflow.
+
 ## Changelog
 
 See [CHANGELOG.md](./CHANGELOG.md).

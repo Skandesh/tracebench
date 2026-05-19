@@ -8,6 +8,7 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
 
 ### Added
 - `RELEASING.md` — maintainer-facing doc for the `pnpm release` workflow (versioning policy, prerequisites, recovery, anti-patterns). README links to it.
+- `CLAUDE.md` — guidance for Claude Code sessions in this repo: architecture invariants (canonical schema, precomputed aggregates, client-side filter, service-layer split), commands, release workflow, gotchas, and an explicit "don't add" list.
 
 ## [0.1.3] — 2026-05-19
 ### Changed

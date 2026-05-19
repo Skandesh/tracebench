@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import type { Session, Harness } from '../types';
 import { Icons } from '../icons';
 import { formatCost, formatDuration, projectName, localTime } from '../format';
+import { useProjectsCollapsed } from '../hooks/useProjectsCollapsed';
 
 interface ProjectSummary {
   name: string;
@@ -55,6 +56,7 @@ export function SessionList({
   onErrorClick,
 }: Props) {
   const projects = useMemo(() => summarizeProjects(sessions), [sessions]);
+  const { collapsed: projectsCollapsed, toggle: toggleProjects } = useProjectsCollapsed();
   const activeSession = sessions.find((s) => s.session_id === activeId);
 
   if (collapsed) {
@@ -111,15 +113,26 @@ export function SessionList({
       </div>
 
       {projects.length > 0 && (
-        <div className="tb-projects">
-          <div className="tb-projects-head">Projects</div>
-          {projects.slice(0, 8).map((p) => (
-            <div key={p.name} className="tb-project">
-              <Icons.Folder size={11} />
-              <span className="tb-project-name">{p.name}</span>
-              <span className="tb-project-meta">{p.count}</span>
-            </div>
-          ))}
+        <div className="tb-projects" data-collapsed={projectsCollapsed ? '1' : '0'}>
+          <button
+            type="button"
+            className="tb-projects-head"
+            onClick={toggleProjects}
+            title={projectsCollapsed ? 'Show projects' : 'Hide projects'}
+            aria-label={projectsCollapsed ? 'Show projects list' : 'Hide projects list'}
+            aria-expanded={!projectsCollapsed}
+          >
+            <span>Projects</span>
+            <Icons.Chevron dir={projectsCollapsed ? 'right' : 'down'} size={11} />
+          </button>
+          {!projectsCollapsed &&
+            projects.slice(0, 8).map((p) => (
+              <div key={p.name} className="tb-project">
+                <Icons.Folder size={11} />
+                <span className="tb-project-name">{p.name}</span>
+                <span className="tb-project-meta">{p.count}</span>
+              </div>
+            ))}
         </div>
       )}
 

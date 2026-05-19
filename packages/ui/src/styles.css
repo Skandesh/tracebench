@@ -441,12 +441,26 @@ kbd {
   border-bottom: 1px solid var(--border-soft);
 }
 .tb-projects-head {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-faint);
   padding: 4px 8px 6px;
+  cursor: pointer;
+}
+.tb-projects-head:hover { color: var(--text-mute); }
+.tb-projects[data-collapsed='1'] {
+  padding-bottom: 2px;
 }
 .tb-project {
   display: flex;

@@ -10,6 +10,7 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
 - **`@tracebench/adapter-cursor`** — indexes Cursor Agent transcripts from `~/.cursor/projects/**/agent-transcripts/**/*.jsonl` (nested sessions and `subagents/` as separate sessions). Cursor harness tab is live.
 - **`--cursor-dir <path>`** CLI flag (default `~/.cursor/projects`).
 - **Collapsible sessions sidebar** — chevron toggle; preference persisted in `localStorage`.
+- **Collapsible Projects list** in the sessions sidebar — chevron on the Projects header; preference in `tracebench.projectsCollapsed`.
 
 ### Changed
 - **Responsive layout** — trace timeline stays primary on narrow windows; analytics rail hides below ~1080px; harness tabs scroll instead of clipping.

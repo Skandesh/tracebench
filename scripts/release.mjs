@@ -33,7 +33,14 @@ const PACKAGES = [
 ];
 
 function sh(cmd, opts = {}) {
-  return execSync(cmd, { stdio: opts.silent ? 'pipe' : 'inherit', cwd: repoRoot, encoding: 'utf8' }).toString().trim();
+  // stdio:'inherit' (the default here) lets the user watch builds/tests/
+  // publishes scroll by, but execSync returns null in that mode — so only
+  // capture+trim output when the caller asked for silent execution.
+  if (opts.silent) {
+    return execSync(cmd, { stdio: 'pipe', cwd: repoRoot, encoding: 'utf8' }).toString().trim();
+  }
+  execSync(cmd, { stdio: 'inherit', cwd: repoRoot });
+  return '';
 }
 
 function fail(msg) {

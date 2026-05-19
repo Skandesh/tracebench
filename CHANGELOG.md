@@ -6,6 +6,7 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.1.3] — 2026-05-19
 ### Changed
 - README dropped the version-pinned "Status" section; the changelog is now the source of truth for what shipped.
 

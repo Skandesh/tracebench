@@ -1,6 +1,6 @@
 {
   "name": "@tracebench/adapter-codex",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Tracebench adapter for Codex CLI session rollouts (~/.codex/sessions/**/*.jsonl).",
   "license": "Apache-2.0",
   "author": "Skandesh",
@@ -10,7 +10,9 @@
     "url": "git+https://github.com/Skandesh/tracebench.git",
     "directory": "packages/adapter-codex"
   },
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

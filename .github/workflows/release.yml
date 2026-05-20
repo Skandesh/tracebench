@@ -24,6 +24,10 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
+      # npm 11+ required for GitHub OIDC trusted publishing (provenance).
+      - name: Install npm 11
+        run: npm install -g npm@11.5.2
+
       - name: Install native build tools for better-sqlite3
         run: sudo apt-get update && sudo apt-get install -y python3 make g++
 
@@ -43,5 +47,5 @@ jobs:
             packages/adapter-cursor \
             packages/server; do
             echo "Publishing ${dir}..."
-            (cd "$dir" && pnpm publish --access public --no-git-checks)
+            (cd "$dir" && pnpm publish --access public --no-git-checks --provenance)
           done

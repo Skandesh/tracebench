@@ -6,6 +6,9 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Fixed
+- **Release CI** — pin npm 11.5.2 for OIDC trusted publishing (fixes npm 404 on publish).
+
 ## [0.2.4] — 2026-05-20
 ### Fixed
 - **Release CI** — `@fastify/static` v8 for Fastify 5 (fixes publish workflow build).

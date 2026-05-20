@@ -95,7 +95,7 @@ node packages/server/dist/cli.js --no-open --verbose
 **Single command** — see `RELEASING.md` for the full doc. TL;DR:
 
 ```bash
-pnpm release 0.1.4         # or patch | minor | major
+pnpm release patch --skip-publish
 ```
 
 This:

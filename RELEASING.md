@@ -2,17 +2,19 @@
 
 Maintainer-only. Users don't need this — see [README.md](./README.md) instead.
 
-`pnpm release <version>` ships a new version of tracebench end-to-end. It bumps all five publishable packages atomically, promotes the changelog, publishes to npm, commits, tags, pushes, and creates a GitHub release.
+`pnpm release <version>` bumps all five packages, promotes the changelog, commits, tags, pushes, and creates a GitHub release. Use `--skip-publish` so CI publishes to npm on the tag.
 
 ## TL;DR
 
 ```bash
-pnpm release 0.1.4         # exact version
+pnpm release patch --skip-publish
 # or
-pnpm release patch         # auto-bump
-pnpm release minor
-pnpm release major
+pnpm release 0.1.4 --skip-publish
+pnpm release minor --skip-publish
+pnpm release major --skip-publish
 ```
+
+Without `--skip-publish`, the script also runs `pnpm publish` locally (passkey / npm token).
 
 That's it. Read on for the rest.
 
@@ -45,7 +47,7 @@ Example entry:
 Make sure your working tree is clean (the script refuses to release with uncommitted changes), then:
 
 ```bash
-pnpm release 0.1.4
+pnpm release 0.1.4 --skip-publish
 ```
 
 The script will:
@@ -55,7 +57,7 @@ The script will:
 3. Bump the version on every package — `@tracebench/core`, `@tracebench/adapter-claude-code`, `@tracebench/adapter-codex`, `@tracebench/adapter-cursor`, and `tracebench` — keeping them locked together.
 4. Run `pnpm install --lockfile-only` to keep the `workspace:*` resolutions consistent.
 5. `pnpm -r build && pnpm -r test`. Aborts on failure.
-6. `pnpm publish --access public --no-git-checks` for each package in dependency order: core → adapter-claude-code → adapter-codex → adapter-cursor → tracebench. The `tracebench` package's `prepack` script bundles the UI dist, README, LICENSE, and CHANGELOG into the tarball.
+6. Unless `--skip-publish`: `pnpm publish` each package in dependency order. With `--skip-publish`, CI publishes on `v*` tag push (`release.yml`).
 7. `git commit -m "release: v0.1.4"`, `git tag v0.1.4`, push commit + tag.
 8. `gh release create v0.1.4 --notes-file …` using the new `[0.1.4]` section as the release body.
 
@@ -63,14 +65,11 @@ If anything fails partway through, the script exits and prints the failing comma
 
 ## Prerequisites
 
-The script assumes you have these set up once on your machine:
+The script assumes you have these set up once:
 
-- **`gh` CLI** authenticated against the `Skandesh/tracebench` repo (`gh auth status` to check).
-- **`npm` auth** for the `tracebench` package and the `@tracebench` scope. A granular token with "bypass 2FA when publishing" stored in `~/.npmrc` is the easiest setup:
-  ```
-  //registry.npmjs.org/:_authToken=npm_XXXXXXXXXXXXXXXXXXXXXXXXX
-  ```
-  Create one at https://www.npmjs.com/settings/<you>/tokens/granular-access-tokens/new with read+write on "Applies to current and future packages" and "Bypass 2FA when publishing" checked.
+- **`gh` CLI** authenticated (`gh auth status`).
+- **Trusted Publisher** on all five npm packages → workflow `release.yml`.
+- **`npm` auth** only without `--skip-publish`.
 
 ## Versioning
 
@@ -80,7 +79,7 @@ We follow [SemVer](https://semver.org/):
 - **MINOR** — new features, new adapters, or any user-visible additions. Backwards-compatible.
 - **PATCH** — bug fixes, perf wins, docs, internal refactors.
 
-All four packages share the same version. Don't try to publish them on separate cadences — the `tracebench` bin depends on exact versions of the scoped packages, so they ship as a quartet.
+All five publishable packages share the same version. Don't try to publish them on separate cadences — the `tracebench` bin depends on exact versions of the scoped packages, so they ship together.
 
 ## What the npm page shows
 

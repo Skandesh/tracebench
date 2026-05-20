@@ -2,18 +2,19 @@
 // One-command release:
 //   1. Bumps version on every publishable package (core + adapters + tracebench bin)
 //   2. Promotes the CHANGELOG's [Unreleased] block to a dated [X.Y.Z] section
-//   3. Builds, tests, publishes all 4 packages to npm in dep order
+//   3. Builds, tests; optionally publishes all 5 packages (or CI on tag)
 //   4. Commits, tags v<version>, pushes
 //   5. Creates a GitHub release with the new CHANGELOG section as notes
 //
 // Usage:
 //   pnpm release 0.1.3
 //   pnpm release patch | minor | major
+//   pnpm release patch --skip-publish
 //
 // Preconditions:
 //   - working tree clean
-//   - logged in to npm (or NPM_TOKEN in ~/.npmrc)
 //   - gh CLI authenticated
+//   - npm auth only when publishing locally (omit with --skip-publish)
 //
 // You don't need to remember these — the script checks and fails loud.
 
@@ -50,8 +51,12 @@ function fail(msg) {
 }
 
 // ── Argument parsing ───────────────────────────────────────────────────────
-const arg = process.argv[2];
-if (!arg) fail('Usage: pnpm release <version | patch | minor | major>');
+const cliArgs = process.argv.slice(2);
+const skipPublish = cliArgs.includes('--skip-publish');
+const arg = cliArgs.find((a) => a !== '--skip-publish');
+if (!arg) {
+  fail('Usage: pnpm release <version | patch | minor | major> [--skip-publish]');
+}
 
 function readPkg(rel) {
   return JSON.parse(readFileSync(join(repoRoot, rel), 'utf8'));
@@ -87,7 +92,9 @@ if (['patch', 'minor', 'major'].includes(arg)) {
 }
 if (nextVersion === currentVersion) fail(`next version equals current (${currentVersion})`);
 
-console.log(`\n→ Releasing ${currentVersion} → ${nextVersion}\n`);
+console.log(`\n→ Releasing ${currentVersion} → ${nextVersion}`);
+if (skipPublish) console.log('  publish: skipped\n');
+else console.log('');
 
 // ── Working tree check ─────────────────────────────────────────────────────
 const status = sh('git status --porcelain', { silent: true });
@@ -138,17 +145,21 @@ sh('pnpm -r build');
 console.log('\n→ Running tests');
 sh('pnpm -r test');
 
-// ── Publish in dep order ──────────────────────────────────────────────────
-const publishOrder = [
-  'packages/core',
-  'packages/adapter-claude-code',
-  'packages/adapter-codex',
-  'packages/adapter-cursor',
-  'packages/server', // publishes as `tracebench`
-];
-for (const dir of publishOrder) {
-  console.log(`\n→ Publishing ${dir}`);
-  sh(`cd ${dir} && pnpm publish --access public --no-git-checks`);
+// ── Publish in dep order (optional; CI handles this when --skip-publish) ───
+if (!skipPublish) {
+  const publishOrder = [
+    'packages/core',
+    'packages/adapter-claude-code',
+    'packages/adapter-codex',
+    'packages/adapter-cursor',
+    'packages/server', // publishes as `tracebench`
+  ];
+  for (const dir of publishOrder) {
+    console.log(`\n→ Publishing ${dir}`);
+    sh(`cd ${dir} && pnpm publish --access public --no-git-checks`);
+  }
+} else {
+  console.log('\n→ Skipping npm publish (CI publishes on tag)');
 }
 
 // ── Commit, tag, push ─────────────────────────────────────────────────────
@@ -170,5 +181,3 @@ try {
 }
 
 console.log(`\n✓ Released v${nextVersion}`);
-console.log(`  npm:    https://www.npmjs.com/package/tracebench`);
-console.log(`  github: https://github.com/Skandesh/tracebench/releases/tag/v${nextVersion}`);

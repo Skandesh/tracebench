@@ -2,7 +2,7 @@
 
 All notable changes to tracebench are documented here. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), versions follow [SemVer](https://semver.org/).
 
-> **How releases work:** edit `[Unreleased]` below as you work. Running `pnpm release <version>` (see `scripts/release.mjs`) promotes it to a dated `[X.Y.Z]` section, bumps all package versions, publishes to npm, commits, tags, and creates a GitHub release with that section as the notes.
+> **How releases work:** edit `[Unreleased]` below as you work. Running `pnpm release <version> --skip-publish` (see `scripts/release.mjs`) promotes it to a dated `[X.Y.Z]` section, bumps all package versions, commits, tags, and pushes.
 
 ## [Unreleased]
 

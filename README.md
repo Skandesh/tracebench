@@ -19,7 +19,7 @@ This is local, no cloud, no telemetry. Apache 2.0.
 
 |  |  |
 |---|---|
-| Adapters live | `claude_code`, `codex`, `cursor` (Agent JSONL transcripts) |
+| Adapters live | `claude_code`, `codex`, `cursor` (Agent JSONL + Composer SQLite) |
 | Adapters planned | `opencode`; Cursor Composer SQLite (`state.vscdb`) for full chat history + tool results |
 | UI | Vite + React 18 — three-pane layout, tool-aware timeline (Bash/Read/Edit/Write/Grep + Codex `exec_command` and `apply_patch` aliases), analytics rail, harness tabs |
 | Backend | Fastify on `127.0.0.1`, SQLite via `better-sqlite3`, multi-adapter indexer |
@@ -35,7 +35,7 @@ npx tracebench
 
 That's it. Opens at **http://127.0.0.1:3478**.
 
-On first run it indexes everything under `~/.claude/projects`, `~/.codex/sessions`, and `~/.cursor/projects/**/agent-transcripts`, then keeps an SQLite cache at `~/.tracebench/tracebench.db` so subsequent boots are near-instant.
+On first run it indexes everything under `~/.claude/projects`, `~/.codex/sessions`, `~/.cursor/projects/**/agent-transcripts`, and Cursor Composer history from `state.vscdb`, then keeps an SQLite cache at `~/.tracebench/tracebench.db` so subsequent boots are near-instant.
 
 ### Flags
 
@@ -46,6 +46,7 @@ On first run it indexes everything under `~/.claude/projects`, `~/.codex/session
 | `--dir <path>` (alias `--claude-dir`) | `~/.claude/projects` | Claude Code projects root |
 | `--codex-dir <path>` | `~/.codex` | Codex sessions root |
 | `--cursor-dir <path>` | `~/.cursor/projects` | Cursor agent-transcripts root |
+| `--cursor-user-data-dir <path>` | OS default | Cursor `User/` dir (Composer `state.vscdb`) |
 | `--db-path <path>` | `~/.tracebench/tracebench.db` | SQLite location |
 | `--no-open` | — | skip browser auto-launch |
 | `--no-index` | — | skip the startup re-index pass |
@@ -149,7 +150,14 @@ pnpm --filter @tracebench/ui dev
 
 ## Releasing
 
-Maintainers: `pnpm release <version>` bumps all 4 packages, promotes the changelog, publishes to npm, commits, tags, and creates the GitHub release. See [RELEASING.md](./RELEASING.md) for the full workflow.
+Maintainers only. See [RELEASING.md](./RELEASING.md).
+
+1. Add notes under `## [Unreleased]` in [CHANGELOG.md](./CHANGELOG.md).
+2. Run `pnpm release patch --skip-publish` (or `minor` / `major` / an exact version).
+3. The script bumps all five packages, builds, tests, commits, tags `v*`, pushes, and opens a GitHub release.
+4. [`.github/workflows/release.yml`](./.github/workflows/release.yml) publishes all five packages to npm on the tag (no local passkey).
+
+One-time setup: npm **Trusted Publisher** on `tracebench` and each `@tracebench/*` package → workflow `release.yml`.
 
 ## Changelog
 

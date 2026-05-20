@@ -35,6 +35,7 @@ let server: BuiltServer;
 let ccRoot: string;
 let codexRoot: string;
 let cursorRoot: string;
+let cursorUserDataDir: string;
 
 beforeAll(async () => {
   // Claude Code root layout: <root>/<encoded-project>/<session>.jsonl
@@ -64,6 +65,7 @@ beforeAll(async () => {
   });
 
   cursorRoot = mkdtempSync(join(tmpdir(), 'tracebench-cursor-'));
+  cursorUserDataDir = mkdtempSync(join(tmpdir(), 'tracebench-cursor-user-'));
   const cursorProj = join(cursorRoot, 'Users-fixtures');
   const mainTranscript = join(
     cursorProj,
@@ -88,6 +90,7 @@ beforeAll(async () => {
     projectsRoot: ccRoot,
     codexRoot,
     cursorRoot,
+    cursorUserDataDir,
     verbose: false,
   });
   await server.app.ready();

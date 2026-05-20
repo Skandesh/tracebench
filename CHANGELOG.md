@@ -6,6 +6,12 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Added
+- **Cursor adapter Phase 2** — indexes Composer sessions from Cursor's global `state.vscdb` (bubbles with tool results, thinking, timestamps, model). Merges with JSONL agent-transcripts; DB wins when `composerId` matches. CLI: `--cursor-user-data-dir <path>`.
+
+### Changed
+- Release docs describe CI publish with `pnpm release --skip-publish`.
+
 ## [0.2.2] — 2026-05-20
 ### Changed
 - Releases publish to npm via GitHub Actions on version tags (`pnpm release --skip-publish`).
@@ -34,7 +40,7 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
 
 ### Added
 - `CHANGELOG.md` is bundled into the published `tracebench` tarball so the npm page can link to it.
-- `scripts/release.mjs` orchestrates the whole release: version bump → changelog promotion → build → publish → commit → tag → GitHub release.
+- `scripts/release.mjs` orchestrates releases: version bump → changelog promotion → build → test → commit → tag → GitHub release; npm publish via CI on tag.
 
 ## [0.1.2] — 2026-05-19
 

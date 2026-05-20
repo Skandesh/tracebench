@@ -15,7 +15,7 @@ packages/
 ├── core/                       schema, SQLite + migrations, pricing, query API
 ├── adapter-claude-code/        reads ~/.claude/projects/**/*.jsonl
 ├── adapter-codex/              reads ~/.codex/sessions + archived_sessions
-├── adapter-cursor/             reads ~/.cursor/projects/**/agent-transcripts
+├── adapter-cursor/             agent-transcripts JSONL + Composer state.vscdb
 ├── server/                     Fastify + multi-adapter indexer + CLI (publishes as `tracebench`)
 └── ui/                         Vite + React 18 (bundled into the server tarball at publish time)
 ```
@@ -92,27 +92,22 @@ node packages/server/dist/cli.js --no-open --verbose
 
 ## Releasing
 
-**Single command** — see `RELEASING.md` for the full doc. TL;DR:
+See `RELEASING.md`. Default flow uses CI for npm (no local auth):
 
 ```bash
 pnpm release patch --skip-publish
 ```
 
-This:
-1. Refuses to run with a dirty working tree.
-2. Promotes `## [Unreleased]` → `## [0.1.4] — YYYY-MM-DD` in `CHANGELOG.md`.
-3. Bumps all 4 `package.json` files to the same version.
-4. `pnpm install --lockfile-only` so workspace deps re-resolve.
-5. `pnpm -r build && pnpm -r test`.
-6. Publishes all 5 packages in dep order: core → adapter-claude-code → adapter-codex → adapter-cursor → tracebench.
-7. Commits as `release: vX.Y.Z`, tags, pushes.
-8. Creates the GitHub release using the new CHANGELOG section as the body.
+1. Clean working tree required.
+2. Promotes `## [Unreleased]` → dated section in `CHANGELOG.md`.
+3. Bumps all five publishable `package.json` files to the same version.
+4. `pnpm install --lockfile-only`, then `pnpm -r build && pnpm -r test`.
+5. Skips local `pnpm publish` — `.github/workflows/release.yml` publishes on `v*` tag via npm Trusted Publisher.
+6. Commits `release: vX.Y.Z`, tags, pushes; `gh release create` uses the new changelog section.
 
-**As you make changes, add lines under `## [Unreleased]` in `CHANGELOG.md`.** That's the release notes. The script reads from there and from nowhere else.
+Add user-facing lines under `## [Unreleased]` only. Don't bump versions by hand or publish packages separately.
 
-**Don't bump versions by hand.** Don't publish individual packages out of band — `tracebench` pins exact versions of the scoped deps; they have to ship together.
-
-If a release half-fails after the changelog is promoted but before push, `git checkout -- .` and re-run. npm reserves the version for 24h, so a partial publish forces a bump on retry.
+If the script fails before push: `git checkout -- .` and re-run. If CI publish fails after the tag is pushed, fix the workflow and bump to the next patch (npm versions are immutable).
 
 ## Gotchas
 

@@ -20,6 +20,7 @@ interface CliArgs {
   dir?: string;
   codexDir?: string;
   cursorDir?: string;
+  cursorUserDataDir?: string;
   dbPath?: string;
   open: boolean;
   index: boolean;
@@ -50,6 +51,7 @@ function parseArgs(argv: string[]): CliArgs {
       case '--claude-dir': a.dir = next(); break;
       case '--codex-dir': a.codexDir = next(); break;
       case '--cursor-dir': a.cursorDir = next(); break;
+      case '--cursor-user-data-dir': a.cursorUserDataDir = next(); break;
       case '--db-path': a.dbPath = next(); break;
       case '--no-open': a.open = false; break;
       case '--no-index': a.index = false; break;
@@ -78,7 +80,8 @@ Usage: tracebench [flags]
   --dir <path>        Claude Code projects dir (default ~/.claude/projects)
                       alias: --claude-dir
   --codex-dir <path>  Codex sessions dir (default ~/.codex)
-  --cursor-dir <path> Cursor projects dir (default ~/.cursor/projects)
+  --cursor-dir <path>        Cursor projects dir (default ~/.cursor/projects)
+  --cursor-user-data-dir <path>  Cursor User dir for Composer DB (default OS-specific)
   --db-path <path>    SQLite file (default ~/.tracebench/tracebench.db)
   --no-open           don't auto-open the browser
   --no-index          skip startup index pass
@@ -117,6 +120,7 @@ async function main(): Promise<void> {
     projectsRoot: args.dir,
     codexRoot: args.codexDir,
     cursorRoot: args.cursorDir,
+    cursorUserDataDir: args.cursorUserDataDir,
     noIndex: !args.index,
     verbose: args.verbose,
   });

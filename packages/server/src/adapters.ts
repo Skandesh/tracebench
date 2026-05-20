@@ -26,11 +26,15 @@ export interface AdapterLoadResult {
   events: CanonicalEvent[];
 }
 
+export interface AdapterDiscoverContext {
+  cursorGlobalDbPath?: string;
+}
+
 export interface AdapterModule {
   harness: Harness;
   formatVersion: string;
   defaultRoot(): string;
-  discover(root?: string): AdapterDiscovered[];
+  discover(root?: string, ctx?: AdapterDiscoverContext): AdapterDiscovered[];
   load(filePath: string): Promise<AdapterLoadResult>;
 }
 
@@ -54,8 +58,11 @@ const cursorAdapter: AdapterModule = {
   harness: 'cursor',
   formatVersion: cursor.FORMAT_VERSION,
   defaultRoot: cursor.defaultProjectsRoot,
-  discover: (root) =>
-    cursor.discoverSessions(root).map((d) => ({
+  discover: (root, ctx) =>
+    cursor.discoverSessions({
+      projectsRoot: root,
+      globalDbPath: ctx?.cursorGlobalDbPath,
+    }).map((d) => ({
       session_id: d.session_id,
       file_path: d.file_path,
       mtime_ms: d.mtime_ms,

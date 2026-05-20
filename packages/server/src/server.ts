@@ -7,6 +7,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from '@tracebench/core';
+import { defaultCursorUserDataDir } from '@tracebench/adapter-cursor';
 import type { TracebenchDb } from '@tracebench/core';
 import { defaultDbPath } from './paths.js';
 import { registerRoutes } from './routes.js';
@@ -21,6 +22,8 @@ export interface ServerOptions {
   codexRoot?: string;
   /** Cursor projects root. Defaults to ~/.cursor/projects */
   cursorRoot?: string;
+  /** Cursor User data dir (global state.vscdb). Defaults to platform Cursor User path. */
+  cursorUserDataDir?: string;
   /** Skip the startup index pass. */
   noIndex?: boolean;
   /** Verbose stderr logging. */
@@ -63,7 +66,10 @@ export async function buildServer(opts: ServerOptions = {}): Promise<BuiltServer
     cursor: opts.cursorRoot,
   } as const;
 
-  await registerRoutes(app, { db, roots });
+  const cursorUserDir = opts.cursorUserDataDir ?? defaultCursorUserDataDir();
+  const cursorGlobalDbPath = join(cursorUserDir, 'globalStorage', 'state.vscdb');
+
+  await registerRoutes(app, { db, roots, cursorGlobalDbPath });
 
   // Static UI: if a built UI exists, serve it. Otherwise a friendly fallback
   // page that explains how to start the dev UI.
@@ -90,6 +96,7 @@ export async function buildServer(opts: ServerOptions = {}): Promise<BuiltServer
         codex: opts.codexRoot,
         cursor: opts.cursorRoot,
       },
+      cursorGlobalDbPath,
       verbose: opts.verbose,
     });
     if (opts.verbose) {

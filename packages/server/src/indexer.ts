@@ -23,6 +23,8 @@ export interface IndexResult {
 export interface IndexOptions {
   /** Override the default discovery root for a specific harness. */
   roots?: Partial<Record<Harness, string>>;
+  /** Override Cursor global state.vscdb (Composer history). */
+  cursorGlobalDbPath?: string;
   /** Force re-index ignoring mtime. */
   full?: boolean;
   /** Log per-session progress to stderr. */
@@ -68,7 +70,9 @@ export async function indexSessions(
 
     let discovered: AdapterDiscovered[];
     try {
-      discovered = adapter.discover(root);
+      discovered = adapter.discover(root, {
+        cursorGlobalDbPath: opts.cursorGlobalDbPath,
+      });
     } catch (e) {
       // Adapter root may not exist (e.g. user doesn't have Codex installed).
       // Treat as zero sessions, not an error.

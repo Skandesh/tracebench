@@ -307,11 +307,17 @@ export function normalizeSession(
 
 import { parseSession } from './parse.js';
 import { promises as fs } from 'node:fs';
+import { isComposerDbUri } from './db-uri.js';
+import { loadComposerSession } from './load-db.js';
 
 export async function loadSession(
   filePath: string,
   opts: { formatVersion?: string; encodedProjectDir?: string } = {},
 ): Promise<NormalizeResult> {
+  if (isComposerDbUri(filePath)) {
+    return loadComposerSession(filePath, opts);
+  }
+
   const raws = await parseSession(filePath);
   let fileMtimeMs: number | undefined;
   try {

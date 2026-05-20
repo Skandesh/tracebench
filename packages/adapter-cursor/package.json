@@ -1,7 +1,7 @@
 {
   "name": "@tracebench/adapter-cursor",
   "version": "0.2.2",
-  "description": "Tracebench adapter for Cursor agent transcripts (~/.cursor/projects/**/agent-transcripts/**/*.jsonl).",
+  "description": "Tracebench adapter for Cursor (agent-transcripts JSONL + Composer state.vscdb).",
   "license": "Apache-2.0",
   "author": "Skandesh",
   "homepage": "https://github.com/Skandesh/tracebench",

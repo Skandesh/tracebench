@@ -27,7 +27,7 @@ Cursor's JSONL export does not include:
 
 The UI still renders `tool_call` events (Read, Write, Bash, Task, etc.) with **input only**.
 
-## Phase 2 (planned): Composer SQLite (`state.vscdb`)
+## Phase 2 (shipped): Composer SQLite (`state.vscdb`)
 
 Full Composer / Ask history lives in Cursor's VS Code–style SQLite DBs. Paths by OS:
 
@@ -41,14 +41,16 @@ Per-workspace index (Cursor ≤2.6): `<User>/workspaceStorage/<id>/state.vscdb` 
 
 **Read WAL consistently:** copy `state.vscdb`, `state.vscdb-wal`, and `state.vscdb-shm` together.
 
-Phase 2 will:
+Phase 2:
 
-1. List composers via `composer.composerHeaders` (3.0+) or workspace `composer.composerData` (≤2.6).
-2. Load `cursorDiskKV` keys `composerData:{id}` and `bubbleId:{id}:{bubbleId}`.
-3. Normalize bubbles into `CanonicalEvent` (including tool results where present).
-4. Dedupe with JSONL sessions when `composerId` matches the transcript folder UUID.
+1. Snapshots `state.vscdb` (+ `-wal`/`-shm`) for consistent reads while Cursor is open.
+2. Lists composers with stored bubbles; loads `composerData:{id}` and ordered `bubbleId:{id}:{bubbleId}` rows.
+3. Normalizes bubbles into `CanonicalEvent` — `tool_call` + `tool_result` (via `toolFormerData`), thinking (`capabilityType` 30), real timestamps, model id.
+4. Dedupes with JSONL: when `composerId` matches an agent-transcript folder UUID, the DB entry replaces JSONL.
 
-Helpers exported for Phase 2: `defaultCursorUserDataDir()`, `defaultCursorGlobalDbPath()` in `src/paths.ts`.
+Discovery merges both sources automatically. DB sessions use virtual paths `cursor-db:{composerId}@{globalDbPath}`.
+
+CLI: `tracebench --cursor-user-data-dir <path>` overrides the OS-default Cursor `User/` directory (see `defaultCursorUserDataDir()` in `src/paths.ts`).
 
 ## SSH / WSL
 

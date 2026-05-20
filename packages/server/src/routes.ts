@@ -19,6 +19,7 @@ import { indexSessions } from './indexer.js';
 export interface RouteContext {
   db: TracebenchDb;
   roots: Partial<Record<Harness, string | undefined>>;
+  cursorGlobalDbPath?: string;
 }
 
 export async function registerRoutes(
@@ -97,6 +98,9 @@ export async function registerRoutes(
     for (const [k, v] of Object.entries(ctx.roots)) {
       if (typeof v === 'string') roots[k as Harness] = v;
     }
-    return indexSessions(ctx.db, { roots });
+    return indexSessions(ctx.db, {
+      roots,
+      cursorGlobalDbPath: ctx.cursorGlobalDbPath,
+    });
   });
 }

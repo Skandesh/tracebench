@@ -22,13 +22,15 @@ describe('discoverSessions', () => {
     writeFileSync(nested, '{"role":"user","message":{"content":[]}}\n');
     writeFileSync(subagent, '{"role":"user","message":{"content":[]}}\n');
 
-    const found = discoverSessions(root);
+    const found = discoverSessions({ projectsRoot: root, globalDbPath: false });
     const ids = found.map((f) => f.session_id).sort();
     expect(ids).toEqual(['sess-main', 'sess-sub']);
     expect(found.every((f) => f.encoded_project_dir === 'Users-me-testproj')).toBe(true);
   });
 
   it('returns empty when root is missing', () => {
-    expect(discoverSessions('/nonexistent/tracebench-cursor-root')).toEqual([]);
+    expect(
+      discoverSessions({ projectsRoot: '/nonexistent/tracebench-cursor-root', globalDbPath: false }),
+    ).toEqual([]);
   });
 });

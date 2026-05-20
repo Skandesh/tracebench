@@ -2,105 +2,132 @@
 
 Maintainer-only. Users don't need this — see [README.md](./README.md) instead.
 
-`pnpm release <version>` bumps all five packages, promotes the changelog, commits, tags, pushes, and creates a GitHub release. Use `--skip-publish` so CI publishes to npm on the tag.
+## Overview
+
+```
+CHANGELOG [Unreleased]  →  pnpm release patch --skip-publish  →  tag vX.Y.Z on main
+                                                              ↓
+                                              GitHub Actions (release.yml)
+                                                              ↓
+                                              npm: all 5 packages @ X.Y.Z
+```
+
+Local machine: changelog, version bump, build, test, git tag, GitHub release notes.  
+CI: npm publish for `tracebench` + four `@tracebench/*` packages (OIDC, no token or passkey).
 
 ## TL;DR
 
 ```bash
+# 1. Edit [Unreleased] in CHANGELOG.md
+# 2. Ship:
 pnpm release patch --skip-publish
-# or
-pnpm release 0.1.4 --skip-publish
-pnpm release minor --skip-publish
-pnpm release major --skip-publish
+# 3. Confirm Actions workflow succeeded; npm shows the new version
 ```
 
-Without `--skip-publish`, the script also runs `pnpm publish` locally (passkey / npm token).
+Also: `pnpm release minor --skip-publish`, `pnpm release major --skip-publish`, or `pnpm release 0.3.0 --skip-publish`.
 
-That's it. Read on for the rest.
+Legacy local publish (passkey or npm token): omit `--skip-publish`.
+
+## One-time setup
+
+1. **`gh` CLI** — `gh auth status` must work for this repo.
+2. **Trusted Publisher** (npm → each package → Settings → Trusted Publisher → GitHub Actions):
+   - `tracebench`
+   - `@tracebench/core`
+   - `@tracebench/adapter-claude-code`
+   - `@tracebench/adapter-codex`
+   - `@tracebench/adapter-cursor`
+
+   Use the same values for all five:
+
+   | Field | Value |
+   |--------|--------|
+   | Repository | `Skandesh/tracebench` |
+   | Workflow filename | `release.yml` |
+   | Environment | *(empty)* |
+
+3. **Workflow on `main`** — [`.github/workflows/release.yml`](./.github/workflows/release.yml) must exist before Trusted Publisher is saved.
+
+Scoped packages live under the **tracebench** org on npm, not on your personal package list.
 
 ## Workflow
 
 ### 1. As you work — edit `[Unreleased]` in `CHANGELOG.md`
 
-Every PR / commit that's worth a user-facing line goes under the `[Unreleased]` section at the top of `CHANGELOG.md`. Use the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) categories:
+Use [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) categories: Added, Changed, Deprecated, Removed, Fixed, Security.
 
-- `### Added` — new features
-- `### Changed` — behavior changes
-- `### Deprecated` — soon-to-be-removed APIs
-- `### Removed` — gone-now APIs
-- `### Fixed` — bug fixes
-- `### Security` — security-relevant fixes
-
-Example entry:
 ```md
 ## [Unreleased]
 
 ### Added
 - OpenCode adapter (#42)
-
-### Fixed
-- Codex session_meta with missing `cwd` no longer crashes the indexer (#48)
 ```
 
-### 2. When you're ready to ship
+### 2. Ship
 
-Make sure your working tree is clean (the script refuses to release with uncommitted changes), then:
+Working tree must be clean:
 
 ```bash
-pnpm release 0.1.4 --skip-publish
+pnpm release patch --skip-publish
 ```
 
-The script will:
+The script (`scripts/release.mjs`):
 
-1. Check the working tree is clean.
-2. Promote `## [Unreleased]` → `## [0.1.4] — 2026-MM-DD` in `CHANGELOG.md`. A fresh empty `[Unreleased]` is left at the top for next time.
-3. Bump the version on every package — `@tracebench/core`, `@tracebench/adapter-claude-code`, `@tracebench/adapter-codex`, `@tracebench/adapter-cursor`, and `tracebench` — keeping them locked together.
-4. Run `pnpm install --lockfile-only` to keep the `workspace:*` resolutions consistent.
-5. `pnpm -r build && pnpm -r test`. Aborts on failure.
-6. Unless `--skip-publish`: `pnpm publish` each package in dependency order. With `--skip-publish`, CI publishes on `v*` tag push (`release.yml`).
-7. `git commit -m "release: v0.1.4"`, `git tag v0.1.4`, push commit + tag.
-8. `gh release create v0.1.4 --notes-file …` using the new `[0.1.4]` section as the release body.
+1. Checks the working tree is clean.
+2. Promotes `## [Unreleased]` → `## [X.Y.Z] — YYYY-MM-DD` (empty `[Unreleased]` left at top).
+3. Bumps version on all five publishable packages.
+4. `pnpm install --lockfile-only`
+5. `pnpm -r build && pnpm -r test` (aborts on failure)
+6. Skips `pnpm publish` when `--skip-publish` is set
+7. `git commit -m "release: vX.Y.Z"`, `git tag vX.Y.Z`, push commit + tags
+8. `gh release create` with the new changelog section as the body
 
-If anything fails partway through, the script exits and prints the failing command — you can fix and re-run. Versions are only "real" once npm has accepted them, so a half-ran release usually just means `git checkout -- .` and try again.
+### 3. Verify CI publish
 
-## Prerequisites
+Open **Actions → Release** for the `vX.Y.Z` run. On success, all five packages show the new version on npm:
 
-The script assumes you have these set up once:
+```bash
+npm view tracebench version
+npm view @tracebench/core version
+```
 
-- **`gh` CLI** authenticated (`gh auth status`).
-- **Trusted Publisher** on all five npm packages → workflow `release.yml`.
-- **`npm` auth** only without `--skip-publish`.
+The `tracebench` tarball is built in CI via each package's `prepack` (UI bundle, README, CHANGELOG).
 
 ## Versioning
 
-We follow [SemVer](https://semver.org/):
+[SemVer](https://semver.org/):
 
-- **MAJOR** — breaking changes to the canonical event schema or the `/api/*` shape, or to the public exports of `@tracebench/core`. Locked at `0.x` for now — bump only when we declare v1.
-- **MINOR** — new features, new adapters, or any user-visible additions. Backwards-compatible.
-- **PATCH** — bug fixes, perf wins, docs, internal refactors.
+- **MAJOR** — breaking schema, `/api/*`, or `@tracebench/core` exports (stay on `0.x` until v1).
+- **MINOR** — features, new adapters (backwards-compatible).
+- **PATCH** — fixes, perf, docs, internal refactors.
 
-All five publishable packages share the same version. Don't try to publish them on separate cadences — the `tracebench` bin depends on exact versions of the scoped packages, so they ship together.
+All five publishable packages share one version. `tracebench` pins exact versions of the scoped deps — ship together.
 
 ## What the npm page shows
 
-The npm page renders whatever `README.md` is inside the most recently published tarball. The repo `README.md` is copied in by the `prepack` script — so to update the npm page, you publish a new version. There's no "amend" on npm; bump and re-release.
+The npm page uses `README.md` from the published `tracebench` tarball (`prepack` copies the repo README). Bump and release to update it.
 
 ## Anti-patterns
 
-- **Don't bump versions by hand** — the script keeps them consistent. Manual edits drift.
-- **Don't publish individual packages out of band** — they need to ship together because `tracebench` pins exact versions of its scoped deps.
-- **Don't write changelog entries in commit messages and skip `CHANGELOG.md`** — the script reads only from `CHANGELOG.md` to build release notes.
-- **Don't republish a version after a bug is found** — npm reserves the number for 24 hours and won't let you. Bump to the next patch.
+- Don't bump versions by hand.
+- Don't publish individual packages out of band.
+- Don't put release notes only in git commit messages — the script reads `CHANGELOG.md` only.
+- Don't republish the same version — bump to the next patch.
 
 ## Emergency recovery
 
-If a publish fails partway and you end up with some packages on npm but not others, the simplest fix is to bump again. npm versions are immutable; you can't fix them in place.
-
-If the script crashed AFTER promoting the changelog but BEFORE pushing, revert the local mutations and start over:
+**Script failed before push** (changelog promoted locally, tag not pushed):
 
 ```bash
 git checkout -- .
 git clean -fd
 pnpm install
-pnpm release 0.1.4    # try again
+pnpm release patch --skip-publish
 ```
+
+**Tag pushed but CI publish failed** (or only some packages on npm):
+
+1. Fix the workflow or Trusted Publisher config.
+2. Bump to the next patch and release again — npm versions are immutable.
+
+**Published locally by mistake without `--skip-publish`:** fine if all five succeeded; otherwise bump and let CI publish on the next tag.

@@ -6,6 +6,9 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Fixed
+- **Release CI** — `@fastify/static` v8 for Fastify 5 (fixes publish workflow build).
+
 ## [0.2.3] — 2026-05-20
 ### Added
 - **Cursor adapter Phase 2** — indexes Composer sessions from Cursor's global `state.vscdb` (bubbles with tool results, thinking, timestamps, model). Merges with JSONL agent-transcripts; DB wins when `composerId` matches. CLI: `--cursor-user-data-dir <path>`.

@@ -1,6 +1,6 @@
 {
   "name": "@tracebench/adapter-cursor",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Tracebench adapter for Cursor agent transcripts (~/.cursor/projects/**/agent-transcripts/**/*.jsonl).",
   "license": "Apache-2.0",
   "author": "Skandesh",

@@ -6,6 +6,7 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-05-20
 ### Changed
 - Releases publish to npm via GitHub Actions on version tags (`pnpm release --skip-publish`).
 

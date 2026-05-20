@@ -24,9 +24,6 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Upgrade npm
-        run: npm install -g npm@11
-
       - name: Install native build tools for better-sqlite3
         run: sudo apt-get update && sudo apt-get install -y python3 make g++
 

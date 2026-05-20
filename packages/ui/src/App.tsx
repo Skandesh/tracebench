@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Harness, Session, ToolCount, Turn } from './types';
 import { listSessions, getSession, getSessionTurns } from './api';
+import { projectName } from './format';
 import { useErrorNavigation } from './hooks/useErrorNavigation';
 import { useSessionsPaneCollapsed } from './hooks/useSessionsPaneCollapsed';
 import { TopBar } from './components/TopBar';
@@ -27,6 +28,7 @@ export function App() {
 
   const [search, setSearch] = useState('');
   const [filterHarness, setFilterHarness] = useState<Harness | 'all'>('all');
+  const [filterProject, setFilterProject] = useState<string | null>(null);
   const [filterTool, setFilterTool] = useState<string | null>(null);
 
   // All error-navigation mechanics — finding errored tool_calls, cycling the
@@ -55,11 +57,19 @@ export function App() {
     void refresh();
   }, [refresh]);
 
-  // The list visible in the SessionList — derived purely from in-memory state.
-  const filteredSessions = useMemo(() => {
-    const q = search.trim().toLowerCase();
+  const sessionsForProjects = useMemo(() => {
     return sessions.filter((s) => {
       if (filterHarness !== 'all' && s.harness !== filterHarness) return false;
+      return true;
+    });
+  }, [sessions, filterHarness]);
+
+  const filteredSessions = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return sessionsForProjects.filter((s) => {
+      if (filterProject != null && projectName(s.project_path) !== filterProject) {
+        return false;
+      }
       if (!q) return true;
       return (
         s.session_id.toLowerCase().includes(q) ||
@@ -67,7 +77,15 @@ export function App() {
         (s.title?.toLowerCase().includes(q) ?? false)
       );
     });
-  }, [sessions, filterHarness, search]);
+  }, [sessionsForProjects, filterProject, search]);
+
+  useEffect(() => {
+    if (filterProject == null) return;
+    const stillVisible = sessionsForProjects.some(
+      (s) => projectName(s.project_path) === filterProject,
+    );
+    if (!stillVisible) setFilterProject(null);
+  }, [sessionsForProjects, filterProject]);
 
   // Auto-select a sensible active session when the visible list changes:
   //   - if the current active is still visible, keep it
@@ -164,6 +182,9 @@ export function App() {
       <div className="tb-cols">
         <SessionList
           sessions={filteredSessions}
+          sessionsForProjects={sessionsForProjects}
+          filterProject={filterProject}
+          setFilterProject={setFilterProject}
           activeId={activeId}
           setActiveId={setActiveId}
           onErrorClick={errNav.navigateForSession}

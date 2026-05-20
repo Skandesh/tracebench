@@ -33,6 +33,9 @@ function summarizeProjects(sessions: readonly Session[]): ProjectSummary[] {
 
 interface Props {
   sessions: Session[];
+  sessionsForProjects: Session[];
+  filterProject: string | null;
+  setFilterProject: (name: string | null) => void;
   activeId: string | null;
   setActiveId: (id: string) => void;
   collapsed: boolean;
@@ -49,13 +52,19 @@ const HARNESS_COLOR: Record<Harness, string> = {
 
 export function SessionList({
   sessions,
+  sessionsForProjects,
+  filterProject,
+  setFilterProject,
   activeId,
   setActiveId,
   collapsed,
   onToggleCollapsed,
   onErrorClick,
 }: Props) {
-  const projects = useMemo(() => summarizeProjects(sessions), [sessions]);
+  const projects = useMemo(
+    () => summarizeProjects(sessionsForProjects),
+    [sessionsForProjects],
+  );
   const { collapsed: projectsCollapsed, toggle: toggleProjects } = useProjectsCollapsed();
   const activeSession = sessions.find((s) => s.session_id === activeId);
 
@@ -127,11 +136,24 @@ export function SessionList({
           </button>
           {!projectsCollapsed &&
             projects.slice(0, 8).map((p) => (
-              <div key={p.name} className="tb-project">
+              <button
+                key={p.name}
+                type="button"
+                className="tb-project"
+                data-active={filterProject === p.name ? '1' : '0'}
+                onClick={() =>
+                  setFilterProject(filterProject === p.name ? null : p.name)
+                }
+                title={
+                  filterProject === p.name
+                    ? 'Show all projects'
+                    : `Show only ${p.name}`
+                }
+              >
                 <Icons.Folder size={11} />
                 <span className="tb-project-name">{p.name}</span>
                 <span className="tb-project-meta">{p.count}</span>
-              </div>
+              </button>
             ))}
         </div>
       )}

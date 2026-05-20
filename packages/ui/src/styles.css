@@ -463,16 +463,29 @@ kbd {
   padding-bottom: 2px;
 }
 .tb-project {
+  appearance: none;
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
+  margin: 0;
+  border: 0;
   padding: 4px 8px;
   border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
   color: var(--text-mute);
   font-size: 12px;
   cursor: pointer;
+  text-align: left;
 }
 .tb-project:hover { background: var(--bg-elev); color: var(--text); }
+.tb-project[data-active='1'] {
+  background: var(--bg-elev-2);
+  color: var(--text);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.tb-project[data-active='1'] .tb-project-meta { color: var(--accent); }
 .tb-project-name { flex: 1; font-family: 'Geist Mono', monospace; font-size: 11.5px; }
 .tb-project-meta {
   font-family: 'Geist Mono', monospace;

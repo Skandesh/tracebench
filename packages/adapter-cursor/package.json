@@ -1,6 +1,6 @@
 {
   "name": "@tracebench/adapter-cursor",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Tracebench adapter for Cursor (agent-transcripts JSONL + Composer state.vscdb).",
   "license": "Apache-2.0",
   "author": "Skandesh",

@@ -6,6 +6,7 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-05-20
 ### Fixed
 - Coordinated npm publish ships `@tracebench/adapter-cursor` with `tracebench` so `npx tracebench` resolves all scoped dependencies.
 

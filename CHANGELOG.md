@@ -9,6 +9,9 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
 ### Added
 - **Cursor adapter Phase 2** — indexes Composer sessions from Cursor's global `state.vscdb` (bubbles with tool results, thinking, timestamps, model). Merges with JSONL agent-transcripts; DB wins when `composerId` matches. CLI: `--cursor-user-data-dir <path>`.
 
+### Fixed
+- **Project filter in sessions sidebar** — clicking a project filters the session list; click again to clear.
+
 ### Changed
 - Release docs describe CI publish with `pnpm release --skip-publish`.
 

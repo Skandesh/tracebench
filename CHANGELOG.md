@@ -6,6 +6,9 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Changed
+- Releases publish to npm via GitHub Actions on version tags (`pnpm release --skip-publish`).
+
 ## [0.2.1] — 2026-05-20
 ### Fixed
 - Coordinated npm publish ships `@tracebench/adapter-cursor` with `tracebench` so `npx tracebench` resolves all scoped dependencies.

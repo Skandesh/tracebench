@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.0.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Upgrade npm
+        run: npm install -g npm@11
+
+      - name: Install native build tools for better-sqlite3
+        run: sudo apt-get update && sudo apt-get install -y python3 make g++
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and test
+        run: pnpm -r build && pnpm -r test
+
+      - name: Publish to npm
+        run: |
+          set -euo pipefail
+          for dir in \
+            packages/core \
+            packages/adapter-claude-code \
+            packages/adapter-codex \
+            packages/adapter-cursor \
+            packages/server; do
+            echo "Publishing ${dir}..."
+            (cd "$dir" && pnpm publish --access public --no-git-checks)
+          done

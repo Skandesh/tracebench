@@ -46,7 +46,7 @@
     "@tracebench/adapter-codex": "workspace:*",
     "@tracebench/adapter-cursor": "workspace:*",
     "fastify": "^5.0.0",
-    "@fastify/static": "^8.0.0"
+    "@fastify/static": "^9.1.1"
   },
   "devDependencies": {
     "tsx": "^4.16.2"

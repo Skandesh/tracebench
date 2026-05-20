@@ -6,6 +6,9 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Fixed
+- Coordinated npm publish ships `@tracebench/adapter-cursor` with `tracebench` so `npx tracebench` resolves all scoped dependencies.
+
 ## [0.2.0] — 2026-05-19
 ### Added
 - **`@tracebench/adapter-cursor`** — indexes Cursor Agent transcripts from `~/.cursor/projects/**/agent-transcripts/**/*.jsonl` (nested sessions and `subagents/` as separate sessions). Cursor harness tab is live.

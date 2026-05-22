@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
-import type { Harness, Session } from '../types';
+import type { Harness, Session, ViewMode } from '../types';
 import { Icons } from '../icons';
+import { HARNESS_LABELS } from '../constants';
 
 interface Props {
   search: string;
@@ -8,17 +9,19 @@ interface Props {
   filterHarness: Harness | 'all';
   setFilterHarness: (h: Harness | 'all') => void;
   sessions: Session[];
+  view: ViewMode;
+  setView: (v: ViewMode) => void;
 }
 
 const HARNESSES: { id: Harness | 'all'; label: string; live: boolean }[] = [
   { id: 'all', label: 'All', live: true },
-  { id: 'claude_code', label: 'Claude Code', live: true },
-  { id: 'codex', label: 'Codex', live: true },
-  { id: 'opencode', label: 'OpenCode', live: false },
-  { id: 'cursor', label: 'Cursor', live: true },
+  { id: 'claude_code', label: HARNESS_LABELS.claude_code, live: true },
+  { id: 'codex', label: HARNESS_LABELS.codex, live: true },
+  { id: 'opencode', label: HARNESS_LABELS.opencode, live: false },
+  { id: 'cursor', label: HARNESS_LABELS.cursor, live: true },
 ];
 
-export function TopBar({ search, setSearch, filterHarness, setFilterHarness, sessions }: Props) {
+export function TopBar({ search, setSearch, filterHarness, setFilterHarness, sessions, view, setView }: Props) {
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: sessions.length };
     for (const s of sessions) {
@@ -72,6 +75,15 @@ export function TopBar({ search, setSearch, filterHarness, setFilterHarness, ses
           ))}
         </div>
         <span className="tb-divider" />
+        <button
+          className="tb-icon-btn"
+          data-active={view === 'dashboard' ? '1' : '0'}
+          onClick={() => setView(view === 'dashboard' ? 'timeline' : 'dashboard')}
+          title={view === 'dashboard' ? 'Back to sessions (d)' : 'Spend Dashboard (d)'}
+          aria-label={view === 'dashboard' ? 'Close dashboard' : 'Open spend dashboard'}
+        >
+          <Icons.Chart size={14} />
+        </button>
         <span className="tb-status-pill">
           <span className="tb-status-dot" />
           local

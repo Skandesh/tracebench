@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Harness, Session, ToolCount, Turn } from './types';
+import type { Harness, Session, ToolCount, Turn, ViewMode } from './types';
 import { listSessions, getSession, getSessionTurns } from './api';
 import { projectName } from './format';
 import { useErrorNavigation } from './hooks/useErrorNavigation';
@@ -8,6 +8,7 @@ import { TopBar } from './components/TopBar';
 import { SessionList } from './components/SessionList';
 import { Timeline } from './components/Timeline';
 import { AnalyticsRail } from './components/AnalyticsRail';
+import { SpendDashboard } from './components/SpendDashboard';
 
 interface SessionDetailBundle {
   session: Session;
@@ -30,6 +31,7 @@ export function App() {
   const [filterHarness, setFilterHarness] = useState<Harness | 'all'>('all');
   const [filterProject, setFilterProject] = useState<string | null>(null);
   const [filterTool, setFilterTool] = useState<string | null>(null);
+  const [view, setView] = useState<ViewMode>('timeline');
 
   // All error-navigation mechanics — finding errored tool_calls, cycling the
   // active one, scrolling to it, and resolving the cross-session "switch +
@@ -161,6 +163,11 @@ export function App() {
         document.getElementById('tb-search')?.focus();
         return;
       }
+      if (e.key === 'd') {
+        e.preventDefault();
+        setView((v) => (v === 'dashboard' ? 'timeline' : 'dashboard'));
+        return;
+      }
       if (!filteredSessions.length) return;
       const i = filteredSessions.findIndex((s) => s.session_id === activeId);
       if (e.key === 'j' && i >= 0 && i < filteredSessions.length - 1) setActiveId(filteredSessions[i + 1]!.session_id);
@@ -178,45 +185,51 @@ export function App() {
         filterHarness={filterHarness}
         setFilterHarness={setFilterHarness}
         sessions={sessions}
+        view={view}
+        setView={setView}
       />
-      <div className="tb-cols">
-        <SessionList
-          sessions={filteredSessions}
-          sessionsForProjects={sessionsForProjects}
-          filterProject={filterProject}
-          setFilterProject={setFilterProject}
-          activeId={activeId}
-          setActiveId={setActiveId}
-          onErrorClick={errNav.navigateForSession}
-          collapsed={sessionsCollapsed}
-          onToggleCollapsed={toggleSessionsPane}
-        />
-        {sessionsError ? (
-          <section className="tb-pane tb-pane-center"><div className="tb-empty">Error: {sessionsError}</div></section>
-        ) : activeSession ? (
-          <Timeline
-            session={activeSession}
-            turns={turns}
-            loading={detailLoading}
-            filterTool={filterTool}
-            setFilterTool={setFilterTool}
-            timelineRef={errNav.timelineRef}
-            errorEventIds={errNav.errorEventIds}
-            activeErrorIndex={errNav.activeErrorIndex}
-            onErrorClick={errNav.navigateNext}
-            onClearErrorHighlight={errNav.clearHighlight}
+      {view === 'dashboard' ? (
+        <SpendDashboard sessions={sessions} onClose={() => setView('timeline')} />
+      ) : (
+        <div className="tb-cols">
+          <SessionList
+            sessions={filteredSessions}
+            sessionsForProjects={sessionsForProjects}
+            filterProject={filterProject}
+            setFilterProject={setFilterProject}
+            activeId={activeId}
+            setActiveId={setActiveId}
+            onErrorClick={errNav.navigateForSession}
+            collapsed={sessionsCollapsed}
+            onToggleCollapsed={toggleSessionsPane}
           />
-        ) : sessionsLoading ? (
-          <section className="tb-pane tb-pane-center"><div className="tb-empty">Loading…</div></section>
-        ) : (
-          <section className="tb-pane tb-pane-center"><div className="tb-empty">No session selected.</div></section>
-        )}
-        {activeSession ? (
-          <AnalyticsRail session={activeSession} toolCounts={toolCounts} turns={turns} />
-        ) : (
-          <aside className="tb-pane tb-pane-right"><div className="tb-pane-head"><span>Analytics</span></div></aside>
-        )}
-      </div>
+          {sessionsError ? (
+            <section className="tb-pane tb-pane-center"><div className="tb-empty">Error: {sessionsError}</div></section>
+          ) : activeSession ? (
+            <Timeline
+              session={activeSession}
+              turns={turns}
+              loading={detailLoading}
+              filterTool={filterTool}
+              setFilterTool={setFilterTool}
+              timelineRef={errNav.timelineRef}
+              errorEventIds={errNav.errorEventIds}
+              activeErrorIndex={errNav.activeErrorIndex}
+              onErrorClick={errNav.navigateNext}
+              onClearErrorHighlight={errNav.clearHighlight}
+            />
+          ) : sessionsLoading ? (
+            <section className="tb-pane tb-pane-center"><div className="tb-empty">Loading…</div></section>
+          ) : (
+            <section className="tb-pane tb-pane-center"><div className="tb-empty">No session selected.</div></section>
+          )}
+          {activeSession ? (
+            <AnalyticsRail session={activeSession} toolCounts={toolCounts} turns={turns} />
+          ) : (
+            <aside className="tb-pane tb-pane-right"><div className="tb-pane-head"><span>Analytics</span></div></aside>
+          )}
+        </div>
+      )}
     </div>
   );
 }

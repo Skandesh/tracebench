@@ -1388,3 +1388,329 @@ kbd {
     grid-row: 3;
   }
 }
+
+/* ================================================================
+   SPEND DASHBOARD
+   ================================================================ */
+
+.tb-dashboard {
+  flex: 1;
+  overflow-y: auto;
+  padding: 32px 48px;
+  max-width: 900px;
+  margin: 0 auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.tb-dash-header {
+  margin-bottom: 28px;
+}
+
+.tb-dash-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tb-dash-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.tb-dash-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  color: var(--text-mute);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.tb-dash-close:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.tb-dash-subtitle {
+  font-size: 12px;
+  color: var(--text-mute);
+  margin: 4px 0 0;
+}
+
+.tb-dash-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--text-mute);
+}
+.tb-dash-empty p {
+  margin: 0 0 8px;
+}
+
+/* Summary stat cards grid */
+.tb-dash-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+  margin-bottom: 32px;
+}
+
+.tb-dash-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tb-dash-card-accent {
+  border-color: var(--accent);
+  background: oklch(from var(--accent) l c h / 0.08);
+}
+
+.tb-dash-card-value {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--text);
+  letter-spacing: -0.02em;
+  font-feature-settings: 'tnum';
+}
+
+.tb-dash-card-accent .tb-dash-card-value {
+  color: var(--accent);
+}
+
+.tb-dash-card-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+
+/* Section headers */
+.tb-dash-section {
+  margin-bottom: 28px;
+}
+
+.tb-dash-section-head {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 12px;
+}
+
+/* Token grid */
+.tb-dash-token-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+}
+
+.tb-dash-token-stat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tb-dash-token-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.tb-dash-token-label {
+  font-size: 12px;
+  color: var(--text-mute);
+}
+
+.tb-dash-token-value {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--text);
+  font-feature-settings: 'tnum';
+}
+
+/* Harness breakdown */
+.tb-dash-harness-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tb-dash-harness-row {
+  display: grid;
+  grid-template-columns: 160px 1fr 100px;
+  gap: 12px;
+  align-items: center;
+}
+
+.tb-dash-harness-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tb-dash-harness-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.tb-dash-harness-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.tb-dash-harness-meta {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.tb-dash-harness-bar-wrap {
+  height: 6px;
+  background: var(--bg-elev-2);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.tb-dash-harness-bar {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.2s ease;
+}
+
+.tb-dash-harness-cost {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.tb-dash-harness-amount {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  font-feature-settings: 'tnum';
+}
+
+.tb-dash-harness-pct {
+  font-size: 11px;
+  color: var(--text-faint);
+  min-width: 40px;
+  text-align: right;
+}
+
+/* Top projects */
+.tb-dash-project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tb-dash-project-row {
+  display: grid;
+  grid-template-columns: 24px 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.tb-dash-project-row:last-child {
+  border-bottom: none;
+}
+
+.tb-dash-project-rank {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-align: right;
+}
+
+.tb-dash-project-name {
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tb-dash-project-cost {
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  font-feature-settings: 'tnum';
+}
+
+.tb-dash-project-sessions {
+  font-size: 11px;
+  color: var(--text-faint);
+  min-width: 80px;
+  text-align: right;
+}
+
+/* Icon button in TopBar */
+.tb-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  color: var(--text-mute);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.tb-icon-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+  border-color: var(--border);
+}
+.tb-icon-btn[data-active="1"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+.tb-icon-btn[data-active="1"]:hover {
+  background: oklch(from var(--accent) calc(l - 0.05) c h);
+}
+
+/* Responsive adjustments for dashboard */
+@media (max-width: 700px) {
+  .tb-dashboard {
+    padding: 24px 20px;
+  }
+  .tb-dash-harness-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .tb-dash-harness-cost {
+    justify-content: flex-start;
+  }
+  .tb-dash-project-row {
+    grid-template-columns: 24px 1fr;
+    gap: 6px;
+  }
+  .tb-dash-project-cost,
+  .tb-dash-project-sessions {
+    grid-column: 2;
+    text-align: left;
+  }
+}

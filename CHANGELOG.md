@@ -6,6 +6,12 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Added
+- **Spend Dashboard** — aggregated spend view across all sessions: totals, token breakdown, spend by provider, and top projects. Toggle from the TopBar chart button or press `d`.
+
+### Changed
+- **Shared UI constants** — `HARNESS_LABELS` and `HARNESS_COLORS` moved to `constants.ts`; `ViewMode` type shared via `types.ts`.
+
 ## [0.2.5] — 2026-05-20
 ### Fixed
 - **Release CI** — pin npm 11.5.2 for OIDC trusted publishing (fixes npm 404 on publish).

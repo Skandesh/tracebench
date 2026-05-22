@@ -6,6 +6,7 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.2.6] — 2026-05-22
 ### Added
 - **Spend Dashboard** — aggregated spend view across all sessions: totals, token breakdown, spend by provider, and top projects. Toggle from the TopBar chart button or press `d`.
 

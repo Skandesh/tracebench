@@ -2,12 +2,16 @@ import { useMemo } from 'react';
 import type { Harness, Session } from '../types';
 import { Icons } from '../icons';
 
+type ViewMode = 'timeline' | 'dashboard';
+
 interface Props {
   search: string;
   setSearch: (s: string) => void;
   filterHarness: Harness | 'all';
   setFilterHarness: (h: Harness | 'all') => void;
   sessions: Session[];
+  view: ViewMode;
+  setView: (v: ViewMode) => void;
 }
 
 const HARNESSES: { id: Harness | 'all'; label: string; live: boolean }[] = [
@@ -18,7 +22,7 @@ const HARNESSES: { id: Harness | 'all'; label: string; live: boolean }[] = [
   { id: 'cursor', label: 'Cursor', live: true },
 ];
 
-export function TopBar({ search, setSearch, filterHarness, setFilterHarness, sessions }: Props) {
+export function TopBar({ search, setSearch, filterHarness, setFilterHarness, sessions, view, setView }: Props) {
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: sessions.length };
     for (const s of sessions) {
@@ -72,6 +76,15 @@ export function TopBar({ search, setSearch, filterHarness, setFilterHarness, ses
           ))}
         </div>
         <span className="tb-divider" />
+        <button
+          className="tb-icon-btn"
+          data-active={view === 'dashboard' ? '1' : '0'}
+          onClick={() => setView(view === 'dashboard' ? 'timeline' : 'dashboard')}
+          title={view === 'dashboard' ? 'Back to sessions (d)' : 'Spend Dashboard (d)'}
+          aria-label={view === 'dashboard' ? 'Close dashboard' : 'Open spend dashboard'}
+        >
+          <Icons.Chart size={14} />
+        </button>
         <span className="tb-status-pill">
           <span className="tb-status-dot" />
           local

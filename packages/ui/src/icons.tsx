@@ -76,6 +76,12 @@ export const Icons = {
   Cmd: ({ size = 14 }: IconProps) => (
     <Icon size={size} sw={1.4} d="M4.5 4.5h5v5h-5zM4.5 4.5a1.5 1.5 0 11-1.5 1.5h1.5zM9.5 4.5a1.5 1.5 0 101.5 1.5H9.5M4.5 9.5a1.5 1.5 0 11-1.5-1.5h1.5zM9.5 9.5a1.5 1.5 0 101.5-1.5H9.5" />
   ),
+  Chart: ({ size = 14 }: IconProps) => (
+    <Icon size={size} d={<><path d="M2 12V6" /><path d="M5.5 12V4" /><path d="M9 12V8" /><path d="M12.5 12V5" /></>} />
+  ),
+  Close: ({ size = 14 }: IconProps) => (
+    <Icon size={size} d="M3 3l8 8M11 3l-8 8" />
+  ),
 };
 
 export type IconName = keyof typeof Icons;

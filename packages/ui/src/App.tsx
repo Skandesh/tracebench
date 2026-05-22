@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Harness, Session, ToolCount, Turn } from './types';
+import type { Harness, Session, ToolCount, Turn, ViewMode } from './types';
 import { listSessions, getSession, getSessionTurns } from './api';
 import { projectName } from './format';
 import { useErrorNavigation } from './hooks/useErrorNavigation';
@@ -9,8 +9,6 @@ import { SessionList } from './components/SessionList';
 import { Timeline } from './components/Timeline';
 import { AnalyticsRail } from './components/AnalyticsRail';
 import { SpendDashboard } from './components/SpendDashboard';
-
-type ViewMode = 'timeline' | 'dashboard';
 
 interface SessionDetailBundle {
   session: Session;

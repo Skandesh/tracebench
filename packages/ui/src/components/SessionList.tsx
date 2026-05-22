@@ -3,6 +3,7 @@ import type { Session, Harness } from '../types';
 import { Icons } from '../icons';
 import { formatCost, formatDuration, projectName, localTime } from '../format';
 import { useProjectsCollapsed } from '../hooks/useProjectsCollapsed';
+import { HARNESS_COLORS } from '../constants';
 
 interface ProjectSummary {
   name: string;
@@ -42,13 +43,6 @@ interface Props {
   onToggleCollapsed: () => void;
   onErrorClick?: (sessionId: string) => void;
 }
-
-const HARNESS_COLOR: Record<Harness, string> = {
-  claude_code: 'var(--harness-cc)',
-  opencode: 'var(--harness-ad)',
-  codex: 'var(--harness-cx)',
-  cursor: 'var(--harness-cu)',
-};
 
 export function SessionList({
   sessions,
@@ -95,7 +89,7 @@ export function SessionList({
           {activeSession && (
             <span
               className="tb-pane-collapsed-dot"
-              style={{ background: HARNESS_COLOR[activeSession.harness] ?? 'var(--mute-strong)' }}
+              style={{ background: HARNESS_COLORS[activeSession.harness] ?? 'var(--mute-strong)' }}
               title={activeSession.title ?? activeSession.session_id}
             />
           )}
@@ -187,7 +181,7 @@ function SessionCard({
   onClick: () => void;
   onErrorClick?: (sessionId: string) => void;
 }) {
-  const harnessColor = HARNESS_COLOR[session.harness] ?? 'var(--mute-strong)';
+  const harnessColor = HARNESS_COLORS[session.harness] ?? 'var(--mute-strong)';
   const idShort = session.session_id.slice(0, 8);
   const title = session.title ?? '(untitled session)';
   return (

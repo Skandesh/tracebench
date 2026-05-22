@@ -2,6 +2,7 @@
 // build-time dependency on @tracebench/core types; the API is the contract.
 
 export type Harness = 'claude_code' | 'opencode' | 'codex' | 'cursor';
+export type ViewMode = 'timeline' | 'dashboard';
 export type Role = 'user' | 'assistant' | 'system' | 'tool';
 export type EventType =
   | 'message'

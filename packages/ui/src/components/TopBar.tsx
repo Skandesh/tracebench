@@ -1,8 +1,7 @@
 import { useMemo } from 'react';
-import type { Harness, Session } from '../types';
+import type { Harness, Session, ViewMode } from '../types';
 import { Icons } from '../icons';
-
-type ViewMode = 'timeline' | 'dashboard';
+import { HARNESS_LABELS } from '../constants';
 
 interface Props {
   search: string;
@@ -16,10 +15,10 @@ interface Props {
 
 const HARNESSES: { id: Harness | 'all'; label: string; live: boolean }[] = [
   { id: 'all', label: 'All', live: true },
-  { id: 'claude_code', label: 'Claude Code', live: true },
-  { id: 'codex', label: 'Codex', live: true },
-  { id: 'opencode', label: 'OpenCode', live: false },
-  { id: 'cursor', label: 'Cursor', live: true },
+  { id: 'claude_code', label: HARNESS_LABELS.claude_code, live: true },
+  { id: 'codex', label: HARNESS_LABELS.codex, live: true },
+  { id: 'opencode', label: HARNESS_LABELS.opencode, live: false },
+  { id: 'cursor', label: HARNESS_LABELS.cursor, live: true },
 ];
 
 export function TopBar({ search, setSearch, filterHarness, setFilterHarness, sessions, view, setView }: Props) {

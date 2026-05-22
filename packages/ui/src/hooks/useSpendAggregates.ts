@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import type { Harness, Session } from '../types';
 import { projectName } from '../format';
+import { HARNESS_LABELS } from '../constants';
 
 interface HarnessAggregate {
   harness: Harness;
@@ -33,13 +34,6 @@ export interface SpendAggregates {
   byHarness: HarnessAggregate[];
   byProject: ProjectAggregate[];
 }
-
-const HARNESS_LABELS: Record<Harness, string> = {
-  claude_code: 'Claude Code',
-  codex: 'Codex',
-  opencode: 'OpenCode',
-  cursor: 'Cursor',
-};
 
 export function useSpendAggregates(sessions: Session[]): SpendAggregates {
   return useMemo(() => {

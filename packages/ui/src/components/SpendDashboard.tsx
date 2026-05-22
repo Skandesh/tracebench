@@ -1,19 +1,13 @@
 import type { Session } from '../types';
 import { Icons } from '../icons';
-import { formatCost, formatDuration, formatTokensCompact } from '../format';
+import { formatCost, formatDuration, formatNum, formatTokensCompact } from '../format';
 import { useSpendAggregates } from '../hooks/useSpendAggregates';
+import { HARNESS_COLORS } from '../constants';
 
 interface Props {
   sessions: Session[];
   onClose: () => void;
 }
-
-const HARNESS_COLORS: Record<string, string> = {
-  claude_code: 'var(--harness-cc)',
-  codex: 'var(--harness-cx)',
-  opencode: 'var(--harness-ad)',
-  cursor: 'var(--harness-cu)',
-};
 
 export function SpendDashboard({ sessions, onClose }: Props) {
   const { grand, byHarness, byProject } = useSpendAggregates(sessions);
@@ -54,16 +48,16 @@ export function SpendDashboard({ sessions, onClose }: Props) {
           </button>
         </div>
         <p className="tb-dash-subtitle">
-          Aggregated across {grand.totalSessions.toLocaleString()} session{grand.totalSessions !== 1 ? 's' : ''}
+          Aggregated across {formatNum(grand.totalSessions)} session{grand.totalSessions !== 1 ? 's' : ''}
         </p>
       </div>
 
       {/* Summary Stats */}
       <div className="tb-dash-stats">
         <StatCard label="Total Spend" value={formatCost(grand.totalCostUsd)} accent />
-        <StatCard label="Sessions" value={grand.totalSessions.toLocaleString()} />
-        <StatCard label="Turns" value={grand.totalTurns.toLocaleString()} />
-        <StatCard label="Tool Calls" value={grand.totalToolCalls.toLocaleString()} />
+        <StatCard label="Sessions" value={formatNum(grand.totalSessions)} />
+        <StatCard label="Turns" value={formatNum(grand.totalTurns)} />
+        <StatCard label="Tool Calls" value={formatNum(grand.totalToolCalls)} />
         <StatCard label="Avg $/Session" value={formatCost(avgCostPerSession)} />
         <StatCard label="Avg Duration" value={formatDuration(avgDuration)} />
       </div>

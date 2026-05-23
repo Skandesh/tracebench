@@ -721,6 +721,52 @@ kbd {
   color: var(--text-faint);
   font-size: 10px;
 }
+.tb-tf-pending {
+  align-self: center;
+  font-family: 'Geist Mono', monospace;
+  font-size: 10px;
+  color: var(--text-faint);
+  padding-left: 4px;
+}
+.tb-tool-filter[data-pending="1"] .tb-tf-btn:not([data-active="1"]) {
+  opacity: 0.55;
+}
+
+.tb-filter-summary {
+  font-family: 'Geist Mono', monospace;
+  font-size: 11px;
+  color: var(--text-mute);
+  margin-bottom: 12px;
+}
+.tb-filter-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tb-filter-more {
+  appearance: none;
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  font: inherit;
+  font-family: 'Geist Mono', monospace;
+  font-size: 11px;
+  color: var(--text-mute);
+  cursor: pointer;
+}
+.tb-filter-more:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.tb-timeline[data-filter-pending="1"] {
+  opacity: 0.72;
+  pointer-events: none;
+}
 
 /* ── Timeline ────────────────────────────────────────────────────────────── */
 
@@ -744,6 +790,8 @@ kbd {
   grid-template-columns: 56px minmax(0, 1fr);
   margin-bottom: 4px;
   min-width: 0;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
 }
 .tb-turn-rail {
   display: flex;

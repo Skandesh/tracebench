@@ -49,3 +49,69 @@ export function findErrorToolCallIds(turns: readonly Turn[]): string[] {
   }
   return ids;
 }
+
+/**
+ * Narrow turns to a single tool type for the session-header filter pills.
+ * O(events) total. Drops turns with no matching calls and strips
+ * non-tool events so pill switching is fast and visually obvious.
+ */
+export function filterTurnsByTool(
+  turns: readonly Turn[],
+  filterTool: string | null,
+): Turn[] {
+  if (!filterTool) return turns as Turn[];
+
+  const filtered: Turn[] = [];
+
+  for (const turn of turns) {
+    const matchingCallIds = new Set<string>();
+    for (const e of turn.events) {
+      if (e.event_type === 'tool_call' && e.tool.name === filterTool) {
+        matchingCallIds.add(e.event_id);
+      }
+    }
+    if (matchingCallIds.size === 0) continue;
+
+    const events: CanonicalEvent[] = [];
+    for (const e of turn.events) {
+      if (e.event_type === 'tool_call' && matchingCallIds.has(e.event_id)) {
+        events.push(e);
+      } else if (
+        e.event_type === 'tool_result' &&
+        e.parent_event_id &&
+        matchingCallIds.has(e.parent_event_id)
+      ) {
+        events.push(e);
+      }
+    }
+
+    filtered.push({ ...turn, events });
+  }
+
+  return filtered;
+}
+
+export interface ToolCallPair {
+  call: CanonicalEvent;
+  result?: CanonicalEvent;
+}
+
+/**
+ * Flat list of matching tool_call + tool_result pairs in session order.
+ * Used by the filtered timeline view — avoids turn-group DOM overhead.
+ */
+export function listFilteredToolCalls(
+  turns: readonly Turn[],
+  filterTool: string,
+): ToolCallPair[] {
+  const pairs: ToolCallPair[] = [];
+  for (const turn of turns) {
+    const byCall = indexToolResultsByCall(turn.events);
+    for (const e of turn.events) {
+      if (e.event_type === 'tool_call' && e.tool.name === filterTool) {
+        pairs.push({ call: e, result: byCall.get(e.event_id) });
+      }
+    }
+  }
+  return pairs;
+}

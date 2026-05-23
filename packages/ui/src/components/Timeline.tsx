@@ -1,16 +1,28 @@
-import { useMemo, type Ref } from 'react';
+import {
+  memo,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+  type Dispatch,
+  type Ref,
+  type SetStateAction,
+} from 'react';
 import type { Session, Turn, CanonicalEvent } from '../types';
 import { Icons } from '../icons';
 import { formatCost, formatDuration, localTime } from '../format';
-import { indexToolResultsByCall } from '../selectors';
+import { indexToolResultsByCall, listFilteredToolCalls } from '../selectors';
 import { ToolCallView } from '../tools/ToolCall';
+
+/** Initial + incremental batch size for filtered tool-call rendering. */
+const FILTER_RENDER_BATCH = 80;
 
 interface Props {
   session: Session;
   turns: Turn[];
   loading: boolean;
   filterTool: string | null;
-  setFilterTool: (t: string | null) => void;
+  setFilterTool: Dispatch<SetStateAction<string | null>>;
   timelineRef?: Ref<HTMLDivElement>;
   errorEventIds?: string[];
   activeErrorIndex?: number | null;
@@ -30,11 +42,15 @@ export function Timeline({
   onErrorClick,
   onClearErrorHighlight,
 }: Props) {
-  // Compute the highlighted event ID
+  const deferredFilterTool = useDeferredValue(filterTool);
+  // Pending only while switching between tool filters — not when clearing to All.
+  const filterPending = filterTool != null && filterTool !== deferredFilterTool;
+
   const highlightedEventId =
     activeErrorIndex != null && errorEventIds && errorEventIds.length > 0
       ? errorEventIds[activeErrorIndex] ?? null
       : null;
+
   const toolCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     for (const t of turns) {
@@ -47,20 +63,42 @@ export function Timeline({
     return counts;
   }, [turns]);
 
-  // Pair each tool_call with its tool_result by parent_event_id.
-  const filteredTurns = useMemo(() => {
-    if (!filterTool) return turns;
-    return turns.map((t) => ({
-      ...t,
-      events: t.events.filter((e) => {
-        if (e.event_type !== 'tool_call' && e.event_type !== 'tool_result') return true;
-        if (e.event_type === 'tool_call') return e.tool.name === filterTool;
-        // For tool_result, keep iff its matching tool_call has the filter name
-        const matchingCall = t.events.find((x) => x.event_id === e.parent_event_id);
-        return matchingCall?.tool.name === filterTool;
-      }),
-    }));
-  }, [turns, filterTool]);
+  const filteredPairs = useMemo(
+    () =>
+      deferredFilterTool
+        ? listFilteredToolCalls(turns, deferredFilterTool)
+        : [],
+    [turns, deferredFilterTool],
+  );
+
+  const [visibleLimit, setVisibleLimit] = useState(FILTER_RENDER_BATCH);
+  useEffect(() => {
+    setVisibleLimit(FILTER_RENDER_BATCH);
+  }, [deferredFilterTool, session.session_id]);
+
+  const visiblePairs = useMemo(
+    () => filteredPairs.slice(0, visibleLimit),
+    [filteredPairs, visibleLimit],
+  );
+
+  useEffect(() => {
+    if (filterPending) return;
+    const el =
+      timelineRef && typeof timelineRef === 'object' && 'current' in timelineRef
+        ? timelineRef.current
+        : null;
+    if (!el) return;
+    if (!deferredFilterTool) {
+      el.scrollTop = 0;
+      return;
+    }
+    const first = el.querySelector('[data-event-id]');
+    first?.scrollIntoView({ block: 'start' });
+  }, [deferredFilterTool, filterPending, session.session_id, timelineRef]);
+
+  const showFiltered = filterTool != null;
+  const hasMoreFiltered = visiblePairs.length < filteredPairs.length;
+  const showFilteredContent = showFiltered && !filterPending && filteredPairs.length > 0;
 
   return (
     <section className="tb-pane tb-pane-center">
@@ -68,11 +106,16 @@ export function Timeline({
         session={session}
         toolCounts={toolCounts}
         filterTool={filterTool}
+        filterPending={filterPending}
         setFilterTool={setFilterTool}
       />
-      <div className="tb-timeline" ref={timelineRef}>
+      <div
+        className="tb-timeline"
+        ref={timelineRef}
+        data-filter-pending={filterPending ? '1' : '0'}
+      >
         {loading && <div className="tb-empty">Loading…</div>}
-        {!loading && filteredTurns.map((turn, idx) => (
+        {!loading && !showFiltered && turns.map((turn, idx) => (
           <TurnGroup
             key={turn.turn_id}
             turnNumber={idx + 1}
@@ -81,10 +124,56 @@ export function Timeline({
             onClearHighlight={onClearErrorHighlight}
           />
         ))}
+        {!loading && showFiltered && filterPending && (
+          <div className="tb-empty">Updating filter…</div>
+        )}
+        {!loading && showFilteredContent && (
+          <>
+            <div className="tb-filter-summary">
+              {filteredPairs.length.toLocaleString()} {deferredFilterTool} call
+              {filteredPairs.length === 1 ? '' : 's'}
+              {hasMoreFiltered && (
+                <>
+                  {' · '}
+                  showing {visiblePairs.length.toLocaleString()}
+                </>
+              )}
+            </div>
+            <div className="tb-filter-list">
+              {visiblePairs.map(({ call, result }) => (
+                <ToolCallView
+                  key={call.event_id}
+                  call={call}
+                  result={result}
+                  defaultOpen={false}
+                  highlighted={call.event_id === highlightedEventId}
+                  onClearHighlight={onClearErrorHighlight}
+                />
+              ))}
+            </div>
+            {hasMoreFiltered && (
+              <button
+                type="button"
+                className="tb-filter-more"
+                onClick={() =>
+                  setVisibleLimit((n) =>
+                    Math.min(n + FILTER_RENDER_BATCH, filteredPairs.length),
+                  )
+                }
+              >
+                Load more ({(filteredPairs.length - visiblePairs.length).toLocaleString()}{' '}
+                remaining)
+              </button>
+            )}
+          </>
+        )}
         {!loading && turns.length === 0 && (
           <div className="tb-empty">No events.</div>
         )}
-        {!loading && turns.length > 0 && (
+        {!loading && showFiltered && !filterPending && filteredPairs.length === 0 && turns.length > 0 && (
+          <div className="tb-empty">No {deferredFilterTool} calls in this session.</div>
+        )}
+        {!loading && turns.length > 0 && (!showFiltered || showFilteredContent) && (
           <div className="tb-timeline-end">
             <span className="tb-end-dot" />
             <span>
@@ -112,12 +201,14 @@ function SessionHeader({
   session,
   toolCounts,
   filterTool,
+  filterPending,
   setFilterTool,
 }: {
   session: Session;
   toolCounts: Record<string, number>;
   filterTool: string | null;
-  setFilterTool: (t: string | null) => void;
+  filterPending: boolean;
+  setFilterTool: Dispatch<SetStateAction<string | null>>;
 }) {
   const sortedTools = useMemo(
     () => Object.entries(toolCounts).sort((a, b) => b[1] - a[1]),
@@ -136,7 +227,7 @@ function SessionHeader({
         <span className="tb-meta-item"><Icons.Coin size={11} />{formatCost(session.aggregates.total_cost_usd)}</span>
       </div>
       {sortedTools.length > 0 && (
-        <div className="tb-tool-filter">
+        <div className="tb-tool-filter" data-pending={filterPending ? '1' : '0'}>
           <button
             className="tb-tf-btn"
             data-active={!filterTool ? '1' : '0'}
@@ -149,18 +240,23 @@ function SessionHeader({
               key={tool}
               className="tb-tf-btn"
               data-active={filterTool === tool ? '1' : '0'}
-              onClick={() => setFilterTool(filterTool === tool ? null : tool)}
+              onClick={() => setFilterTool((prev) => (prev === tool ? null : tool))}
             >
               {tool} <span className="tb-tf-c">{n}</span>
             </button>
           ))}
+          {filterPending && (
+            <span className="tb-tf-pending" aria-live="polite">
+              Updating…
+            </span>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function TurnGroup({
+const TurnGroup = memo(function TurnGroup({
   turnNumber,
   turn,
   highlightedEventId,
@@ -181,7 +277,7 @@ function TurnGroup({
       </div>
       <div className="tb-turn-items">
         {turn.events.map((e) => {
-          if (e.event_type === 'tool_result') return null; // rendered inside the tool_call
+          if (e.event_type === 'tool_result') return null;
           if (e.event_type === 'meta') return null;
           if (e.event_type === 'tool_call') {
             return (
@@ -199,7 +295,7 @@ function TurnGroup({
       </div>
     </div>
   );
-}
+});
 
 function MessageEntry({ event }: { event: CanonicalEvent }) {
   const content = typeof event.content === 'string' ? event.content : event.content ? JSON.stringify(event.content) : '';

@@ -6,6 +6,10 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Fixed
+- **Session tool filter** — pill switching stays responsive on large sessions; filtered view renders in batches with load-more instead of mounting thousands of rows at once.
+- **CLI port conflict** — starting tracebench while port 3478 is taken auto-bumps to the next free port instead of failing with EADDRINUSE.
+
 ## [0.2.6] — 2026-05-22
 ### Added
 - **Spend Dashboard** — aggregated spend view across all sessions: totals, token breakdown, spend by provider, and top projects. Toggle from the TopBar chart button or press `d`.

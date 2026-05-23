@@ -6,6 +6,7 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.2.7] — 2026-05-23
 ### Fixed
 - **Session tool filter** — pill switching stays responsive on large sessions; filtered view renders in batches with load-more instead of mounting thousands of rows at once.
 - **CLI port conflict** — starting tracebench while port 3478 is taken auto-bumps to the next free port instead of failing with EADDRINUSE.

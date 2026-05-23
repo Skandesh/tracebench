@@ -12,6 +12,7 @@
 
 import { spawn } from 'node:child_process';
 import { platform } from 'node:os';
+import type { FastifyInstance } from 'fastify';
 import { buildServer } from './server.js';
 
 interface CliArgs {
@@ -92,6 +93,28 @@ Once running, the UI is at http://localhost:<port>
 `);
 }
 
+const MAX_PORT_ATTEMPTS = 100;
+
+async function listenOnAvailablePort(
+  app: FastifyInstance,
+  host: string,
+  startPort: number,
+): Promise<number> {
+  for (let i = 0; i < MAX_PORT_ATTEMPTS; i++) {
+    const port = startPort + i;
+    try {
+      await app.listen({ port, host });
+      return port;
+    } catch (err) {
+      const code = err instanceof Error && 'code' in err ? err.code : undefined;
+      if (code !== 'EADDRINUSE') throw err;
+    }
+  }
+  throw new Error(
+    `no available port found in range ${startPort}–${startPort + MAX_PORT_ATTEMPTS - 1}`,
+  );
+}
+
 function openInBrowser(url: string): void {
   const cmd =
     platform() === 'darwin'
@@ -125,8 +148,18 @@ async function main(): Promise<void> {
     verbose: args.verbose,
   });
 
-  const url = `http://${args.host}:${args.port}`;
-  await app.listen({ port: args.port, host: args.host });
+  let port: number;
+  try {
+    port = await listenOnAvailablePort(app, args.host, args.port);
+  } catch (err) {
+    await app.close();
+    throw err;
+  }
+
+  const url = `http://${args.host}:${port}`;
+  if (port !== args.port) {
+    process.stdout.write(`\nport ${args.port} in use, using ${port} instead\n`);
+  }
   process.stdout.write(`\ntracebench listening on ${url}\n`);
   if (args.open) openInBrowser(url);
 

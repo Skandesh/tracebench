@@ -30,11 +30,13 @@ const CURSOR_FIXTURES = join(
 
 import { mkdtempSync, writeFileSync, readFileSync, readdirSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { createMinimalOpencodeDb } from '../../adapter-opencode/src/db-fixture.js';
 
 let server: BuiltServer;
 let ccRoot: string;
 let codexRoot: string;
 let cursorRoot: string;
+let opencodeRoot: string;
 let cursorUserDataDir: string;
 
 beforeAll(async () => {
@@ -85,11 +87,15 @@ beforeAll(async () => {
   writeFileSync(mainTranscript, readFileSync(join(CURSOR_FIXTURES, '01-simple.jsonl')));
   writeFileSync(subTranscript, readFileSync(join(CURSOR_FIXTURES, '02-subagent.jsonl')));
 
+  opencodeRoot = mkdtempSync(join(tmpdir(), 'tracebench-opencode-'));
+  createMinimalOpencodeDb(join(opencodeRoot, 'opencode.db'));
+
   server = await buildServer({
     dbPath: ':memory:',
     projectsRoot: ccRoot,
     codexRoot,
     cursorRoot,
+    opencodeRoot,
     cursorUserDataDir,
     verbose: false,
   });
@@ -113,13 +119,14 @@ describe('GET /api/sessions', () => {
     const res = await server.app.inject({ method: 'GET', url: '/api/sessions' });
     expect(res.statusCode).toBe(200);
     const body = res.json() as { sessions: Array<{ session_id: string; harness: string; aggregates: { tool_call_count: number } }> };
-    expect(body.sessions.length).toBe(8); // three CC + three Codex + two Cursor fixtures
+    expect(body.sessions.length).toBe(9); // three CC + three Codex + two Cursor + one OpenCode
     expect(body.sessions.every((s) => 'aggregates' in s)).toBe(true);
     const byHarness: Record<string, number> = {};
     for (const s of body.sessions) byHarness[s.harness] = (byHarness[s.harness] ?? 0) + 1;
     expect(byHarness.claude_code).toBe(3);
     expect(byHarness.codex).toBe(3);
     expect(byHarness.cursor).toBe(2);
+    expect(byHarness.opencode).toBe(1);
   });
 
   it('filters by harness=claude_code', async () => {
@@ -157,6 +164,15 @@ describe('GET /api/sessions', () => {
     });
     expect(res.statusCode).toBe(200);
     expect((res.json() as { sessions: unknown[] }).sessions.length).toBe(2);
+  });
+
+  it('filters by harness=opencode', async () => {
+    const res = await server.app.inject({
+      method: 'GET',
+      url: '/api/sessions?harness=opencode',
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { sessions: unknown[] }).sessions.length).toBe(1);
   });
 });
 
@@ -225,13 +241,14 @@ describe('POST /api/reindex', () => {
       skipped: number;
       per_harness: Record<string, { scanned: number; skipped: number; indexed: number }>;
     };
-    expect(body.scanned).toBe(8);
+    expect(body.scanned).toBe(9);
     // After the initial index, mtimes haven't changed → all skipped
-    expect(body.skipped).toBe(8);
+    expect(body.skipped).toBe(9);
     expect(body.indexed).toBe(0);
     expect(body.per_harness.claude_code).toEqual({ scanned: 3, indexed: 0, skipped: 3 });
     expect(body.per_harness.codex).toEqual({ scanned: 3, indexed: 0, skipped: 3 });
     expect(body.per_harness.cursor).toEqual({ scanned: 2, indexed: 0, skipped: 2 });
+    expect(body.per_harness.opencode).toEqual({ scanned: 1, indexed: 0, skipped: 1 });
   });
 });
 

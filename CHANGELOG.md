@@ -6,6 +6,12 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Added
+- **OpenCode adapter** — reads sessions from `~/.local/share/opencode/opencode.db` (messages, parts, tools, reasoning, compaction).
+- **Context window analyzer** — session-mode composition bar, attention zones, waste detection, and advisory suggestions in the analytics rail (`analyzeSessionContext` in `@tracebench/core`).
+- **Context inspector** — per-category totals, top tool-result offenders, turn deltas on the timeline, token badges on tool rows, and a **Missing or incomplete logs** panel (missing results, orphans, empty outputs, Cursor JSONL gaps). Click any item to jump to the timeline.
+- **Analytics rail UX** — Overview / Context tabs, collapsible secondary sections, wider rail, and less duplicate context metrics.
+
 ## [0.2.7] — 2026-05-23
 ### Fixed
 - **Session tool filter** — pill switching stays responsive on large sessions; filtered view renders in batches with load-more instead of mounting thousands of rows at once.

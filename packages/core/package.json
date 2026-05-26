@@ -36,7 +36,16 @@
     "./query": {
       "types": "./dist/query.d.ts",
       "import": "./dist/query.js"
-    }
+    },
+    "./context-analyzer": {
+      "types": "./dist/context-analyzer.d.ts",
+      "import": "./dist/context-analyzer.js"
+    },
+    "./pricing-calc": {
+      "types": "./dist/pricing-calc.d.ts",
+      "import": "./dist/pricing-calc.js"
+    },
+    "./pricing.json": "./pricing.json"
   },
   "files": [
     "dist",

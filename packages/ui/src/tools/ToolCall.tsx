@@ -3,9 +3,10 @@
 
 import { useEffect, type ReactNode } from 'react';
 import { useDisclosure } from '../hooks/useDisclosure';
+import type { ToolResultContextImpact } from '@tracebench/core/context-analyzer';
 import type { CanonicalEvent } from '../types';
 import { Icons, type IconName } from '../icons';
-import { formatMs } from '../format';
+import { formatMs, formatTokensCompact } from '../format';
 
 interface ToolCallProps {
   call: CanonicalEvent;
@@ -13,6 +14,7 @@ interface ToolCallProps {
   defaultOpen?: boolean;
   highlighted?: boolean;
   onClearHighlight?: () => void;
+  contextImpact?: ToolResultContextImpact;
 }
 
 const HIGHLIGHT_DURATION_MS = 1200;
@@ -62,9 +64,9 @@ function ToolShell({
   );
 }
 
-export function ToolCallView({ call, result, defaultOpen, highlighted, onClearHighlight }: ToolCallProps) {
+export function ToolCallView({ call, result, defaultOpen, highlighted, onClearHighlight, contextImpact }: ToolCallProps) {
   const name = call.tool.name ?? 'tool';
-  const props = { call, result, highlighted, onClearHighlight };
+  const props = { call, result, highlighted, onClearHighlight, contextImpact };
   // Codex aliases — its tool names differ but the renderer can be reused.
   switch (name) {
     case 'Bash':
@@ -94,9 +96,11 @@ interface HeadProps {
   status?: 'ok' | 'err';
   open: boolean;
   onToggle: () => void;
+  tokenEstimate?: number | null;
+  logNote?: ReactNode;
 }
 
-function ToolHead({ tool, iconName, summary, ms, kids, status = 'ok', open, onToggle }: HeadProps) {
+function ToolHead({ tool, iconName, summary, ms, kids, status = 'ok', open, onToggle, tokenEstimate, logNote }: HeadProps) {
   const Icon = iconName && Icons[iconName] ? Icons[iconName] : Icons.Hash;
   return (
     <button className="tb-tool-head" onClick={onToggle} data-open={open ? '1' : '0'}>
@@ -105,12 +109,37 @@ function ToolHead({ tool, iconName, summary, ms, kids, status = 'ok', open, onTo
       <span className="tb-tool-name">{tool}</span>
       <span className="tb-tool-summary">{summary}</span>
       <span className="tb-tool-meta">
+        {logNote}
+        {tokenEstimate != null && tokenEstimate > 0 && (
+          <span className="tb-tool-tok">~{formatTokensCompact(tokenEstimate)} tok</span>
+        )}
         {kids && <span className="tb-tool-kids">{kids}</span>}
         {ms != null && <span className="tb-tool-ms">{formatMs(ms)}</span>}
         {status === 'err' && <span className="tb-tool-status tb-tool-status-err">error</span>}
       </span>
     </button>
   );
+}
+
+function toolContextMeta(contextImpact?: ToolResultContextImpact, result?: CanonicalEvent) {
+  if (contextImpact?.log_status === 'missing') {
+    return {
+      tokenEstimate: null as number | null,
+      logNote: <span className="tb-tool-log-missing">No result in log</span>,
+    };
+  }
+  if (contextImpact?.log_status === 'empty') {
+    return {
+      tokenEstimate: null as number | null,
+      logNote: <span className="tb-tool-log-missing">Empty output in log</span>,
+    };
+  }
+  const tokens = contextImpact?.estimated_tokens ?? 0;
+  const showSize = tokens >= 8_000;
+  return {
+    tokenEstimate: showSize ? tokens : null,
+    logNote: undefined as ReactNode,
+  };
 }
 
 function toolStatus(result?: CanonicalEvent): 'ok' | 'err' {
@@ -135,7 +164,7 @@ function colorLine(line: string): string {
 
 // ── Bash ──────────────────────────────────────────────────────────────────
 
-function BashTool({ call, result, defaultOpen, highlighted, onClearHighlight }: ToolCallProps) {
+function BashTool({ call, result, defaultOpen, highlighted, onClearHighlight, contextImpact }: ToolCallProps) {
   const { open, toggle } = useDisclosure(defaultOpen);
   // Claude Code uses `command`; Codex `exec_command` uses `cmd`.
   const input = (call.tool.input ?? {}) as { command?: string; cmd?: string; description?: string };
@@ -143,6 +172,7 @@ function BashTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
   const output = outputAsString(result);
   const status = toolStatus(result);
   const lines = output.split('\n');
+  const ctx = toolContextMeta(contextImpact, result);
 
   return (
     <ToolShell
@@ -160,6 +190,8 @@ function BashTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
         summary={<span className="tb-tool-summary-text">{command}</span>}
         ms={result?.duration_ms ?? null}
         status={status}
+        tokenEstimate={ctx.tokenEstimate}
+        logNote={ctx.logNote}
       />
       {open && (
         <div className="tb-tool-body tb-bash-body">
@@ -182,7 +214,7 @@ function BashTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
 
 // ── Read ──────────────────────────────────────────────────────────────────
 
-function ReadTool({ call, result, defaultOpen, highlighted, onClearHighlight }: ToolCallProps) {
+function ReadTool({ call, result, defaultOpen, highlighted, onClearHighlight, contextImpact }: ToolCallProps) {
   const { open, toggle } = useDisclosure(defaultOpen);
   const input = (call.tool.input ?? {}) as { file_path?: string; offset?: number; limit?: number };
   const file = input.file_path ?? '';
@@ -194,6 +226,7 @@ function ReadTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
         : '';
   const output = outputAsString(result);
   const lineCount = output ? output.split('\n').length : 0;
+  const ctx = toolContextMeta(contextImpact, result);
 
   return (
     <ToolShell
@@ -210,6 +243,8 @@ function ReadTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
         summary={<><span className="tb-path">{file}</span>{range && <span className="tb-range">{range}</span>}</>}
         kids={lineCount ? `${lineCount} lines` : undefined}
         status={toolStatus(result)}
+        tokenEstimate={ctx.tokenEstimate}
+        logNote={ctx.logNote}
       />
       {open && output && (
         <div className="tb-tool-body tb-read-body">
@@ -222,7 +257,7 @@ function ReadTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
 
 // ── Edit ──────────────────────────────────────────────────────────────────
 
-function EditTool({ call, result, defaultOpen, highlighted, onClearHighlight }: ToolCallProps) {
+function EditTool({ call, result, defaultOpen, highlighted, onClearHighlight, contextImpact }: ToolCallProps) {
   const { open, toggle } = useDisclosure(defaultOpen);
   // Claude Code Edit input: { file_path, old_string, new_string }.
   // Codex apply_patch input: { _raw: patch-string }.
@@ -245,6 +280,7 @@ function EditTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
     : (input.old_string ?? '').split('\n').length;
   const oldLines = (input.old_string ?? '').split('\n');
   const newLines = (input.new_string ?? '').split('\n');
+  const ctx = toolContextMeta(contextImpact, result);
 
   return (
     <ToolShell
@@ -261,6 +297,8 @@ function EditTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
         summary={<span className="tb-path">{patchFile}</span>}
         kids={<><span className="tb-add">+{adds}</span> <span className="tb-del">-{dels}</span></>}
         status={toolStatus(result)}
+        tokenEstimate={ctx.tokenEstimate}
+        logNote={ctx.logNote}
       />
       {open && (
         <div className="tb-tool-body tb-edit-body">
@@ -306,11 +344,12 @@ function EditTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
 
 // ── Write ─────────────────────────────────────────────────────────────────
 
-function WriteTool({ call, result, defaultOpen, highlighted, onClearHighlight }: ToolCallProps) {
+function WriteTool({ call, result, defaultOpen, highlighted, onClearHighlight, contextImpact }: ToolCallProps) {
   const { open, toggle } = useDisclosure(defaultOpen);
   const input = (call.tool.input ?? {}) as { file_path?: string; content?: string };
   const content = input.content ?? '';
   const lineCount = content ? content.split('\n').length : 0;
+  const ctx = toolContextMeta(contextImpact, result);
 
   return (
     <ToolShell
@@ -327,6 +366,8 @@ function WriteTool({ call, result, defaultOpen, highlighted, onClearHighlight }:
         summary={<span className="tb-path">{input.file_path ?? ''}</span>}
         kids={lineCount ? <span className="tb-add">+{lineCount}</span> : undefined}
         status={toolStatus(result)}
+        tokenEstimate={ctx.tokenEstimate}
+        logNote={ctx.logNote}
       />
       {open && content && (
         <div className="tb-tool-body tb-write-body">
@@ -339,11 +380,12 @@ function WriteTool({ call, result, defaultOpen, highlighted, onClearHighlight }:
 
 // ── Grep ──────────────────────────────────────────────────────────────────
 
-function GrepTool({ call, result, defaultOpen, highlighted, onClearHighlight }: ToolCallProps) {
+function GrepTool({ call, result, defaultOpen, highlighted, onClearHighlight, contextImpact }: ToolCallProps) {
   const { open, toggle } = useDisclosure(defaultOpen);
   const input = (call.tool.input ?? {}) as { pattern?: string; path?: string; glob?: string };
   const output = outputAsString(result);
   const matchCount = output ? output.split('\n').filter((l) => l.trim()).length : 0;
+  const ctx = toolContextMeta(contextImpact, result);
 
   return (
     <ToolShell
@@ -366,6 +408,8 @@ function GrepTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
         }
         kids={matchCount ? `${matchCount} matches` : undefined}
         status={toolStatus(result)}
+        tokenEstimate={ctx.tokenEstimate}
+        logNote={ctx.logNote}
       />
       {open && output && (
         <div className="tb-tool-body tb-read-body">
@@ -378,9 +422,10 @@ function GrepTool({ call, result, defaultOpen, highlighted, onClearHighlight }: 
 
 // ── Fallback for unknown tools ────────────────────────────────────────────
 
-function GenericTool({ call, result, defaultOpen, highlighted, onClearHighlight }: ToolCallProps) {
+function GenericTool({ call, result, defaultOpen, highlighted, onClearHighlight, contextImpact }: ToolCallProps) {
   const { open, toggle } = useDisclosure(defaultOpen);
   const name = call.tool.name ?? 'tool';
+  const ctx = toolContextMeta(contextImpact, result);
 
   return (
     <ToolShell
@@ -395,6 +440,8 @@ function GenericTool({ call, result, defaultOpen, highlighted, onClearHighlight 
         onToggle={toggle}
         summary={<span className="tb-mute">{Object.keys(call.tool.input ?? {}).join(', ') || '—'}</span>}
         status={toolStatus(result)}
+        tokenEstimate={ctx.tokenEstimate}
+        logNote={ctx.logNote}
       />
       {open && (
         <div className="tb-tool-body">

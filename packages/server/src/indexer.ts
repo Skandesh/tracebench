@@ -60,6 +60,8 @@ export async function indexSessions(
     const root = opts.roots?.[adapter.harness];
     const stats = { scanned: 0, indexed: 0, skipped: 0 };
 
+    adapter.beginIndexPass?.(root);
+    try {
     // Load known sessions for this adapter
     const knownRows = db.raw
       .prepare(
@@ -111,6 +113,9 @@ export async function indexSessions(
     result.scanned += stats.scanned;
     result.indexed += stats.indexed;
     result.skipped += stats.skipped;
+    } finally {
+      adapter.endIndexPass?.();
+    }
   }
 
   result.duration_ms = Date.now() - t0;

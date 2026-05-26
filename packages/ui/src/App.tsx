@@ -3,6 +3,7 @@ import type { Harness, Session, ToolCount, Turn, ViewMode } from './types';
 import { listSessions, getSession, getSessionTurns } from './api';
 import { projectName } from './format';
 import { useErrorNavigation } from './hooks/useErrorNavigation';
+import { useTimelineJump } from './hooks/useTimelineJump';
 import { useSessionsPaneCollapsed } from './hooks/useSessionsPaneCollapsed';
 import { TopBar } from './components/TopBar';
 import { SessionList } from './components/SessionList';
@@ -36,7 +37,15 @@ export function App() {
   // All error-navigation mechanics — finding errored tool_calls, cycling the
   // active one, scrolling to it, and resolving the cross-session "switch +
   // jump" intent — live in this hook. App just decides when to invoke it.
-  const errNav = useErrorNavigation({ turns, activeId, detailLoading, setActiveId });
+  const timelineRef = useRef<HTMLDivElement>(null);
+  const errNav = useErrorNavigation({
+    turns,
+    activeId,
+    detailLoading,
+    setActiveId,
+    timelineRef,
+  });
+  const inspectorJump = useTimelineJump(activeId, timelineRef);
   const { collapsed: sessionsCollapsed, toggle: toggleSessionsPane } = useSessionsPaneCollapsed();
 
   // One initial fetch of *all* sessions, no harness filter. Filter + search
@@ -212,11 +221,13 @@ export function App() {
               loading={detailLoading}
               filterTool={filterTool}
               setFilterTool={setFilterTool}
-              timelineRef={errNav.timelineRef}
+              timelineRef={timelineRef}
               errorEventIds={errNav.errorEventIds}
               activeErrorIndex={errNav.activeErrorIndex}
               onErrorClick={errNav.navigateNext}
               onClearErrorHighlight={errNav.clearHighlight}
+              inspectorHighlightId={inspectorJump.highlightedEventId}
+              onClearInspectorHighlight={inspectorJump.clearHighlight}
             />
           ) : sessionsLoading ? (
             <section className="tb-pane tb-pane-center"><div className="tb-empty">Loading…</div></section>
@@ -224,7 +235,12 @@ export function App() {
             <section className="tb-pane tb-pane-center"><div className="tb-empty">No session selected.</div></section>
           )}
           {activeSession ? (
-            <AnalyticsRail session={activeSession} toolCounts={toolCounts} turns={turns} />
+            <AnalyticsRail
+              session={activeSession}
+              toolCounts={toolCounts}
+              turns={turns}
+              onJumpToEvent={inspectorJump.jumpToEvent}
+            />
           ) : (
             <aside className="tb-pane tb-pane-right"><div className="tb-pane-head"><span>Analytics</span></div></aside>
           )}

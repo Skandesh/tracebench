@@ -1,0 +1,35 @@
+{
+  "name": "@tracebench/adapter-opencode",
+  "version": "0.2.7",
+  "description": "Tracebench adapter for OpenCode sessions (~/.local/share/opencode/opencode.db).",
+  "license": "Apache-2.0",
+  "author": "Skandesh",
+  "homepage": "https://github.com/Skandesh/tracebench",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Skandesh/tracebench.git",
+    "directory": "packages/adapter-opencode"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepack": "pnpm build"
+  },
+  "dependencies": {
+    "@tracebench/core": "workspace:*"
+  }
+}

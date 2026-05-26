@@ -36,6 +36,12 @@ importers:
         specifier: workspace:*
         version: link:../core
 
+  packages/adapter-opencode:
+    dependencies:
+      '@tracebench/core':
+        specifier: workspace:*
+        version: link:../core
+
   packages/core:
     dependencies:
       better-sqlite3:
@@ -60,6 +66,9 @@ importers:
       '@tracebench/adapter-cursor':
         specifier: workspace:*
         version: link:../adapter-cursor
+      '@tracebench/adapter-opencode':
+        specifier: workspace:*
+        version: link:../adapter-opencode
       '@tracebench/core':
         specifier: workspace:*
         version: link:../core
@@ -73,6 +82,9 @@ importers:
 
   packages/ui:
     dependencies:
+      '@tracebench/core':
+        specifier: workspace:*
+        version: link:../core
       react:
         specifier: ^18.3.1
         version: 18.3.1

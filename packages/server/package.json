@@ -45,6 +45,7 @@
     "@tracebench/adapter-claude-code": "workspace:*",
     "@tracebench/adapter-codex": "workspace:*",
     "@tracebench/adapter-cursor": "workspace:*",
+    "@tracebench/adapter-opencode": "workspace:*",
     "fastify": "^5.0.0",
     "@fastify/static": "^8.0.0"
   },

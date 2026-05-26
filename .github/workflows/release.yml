@@ -45,6 +45,7 @@ jobs:
             packages/adapter-claude-code \
             packages/adapter-codex \
             packages/adapter-cursor \
+            packages/adapter-opencode \
             packages/server; do
             echo "Publishing ${dir}..."
             (cd "$dir" && pnpm publish --access public --no-git-checks --provenance)

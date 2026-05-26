@@ -2,7 +2,7 @@
 // One-command release:
 //   1. Bumps version on every publishable package (core + adapters + tracebench bin)
 //   2. Promotes the CHANGELOG's [Unreleased] block to a dated [X.Y.Z] section
-//   3. Builds, tests; optionally publishes all 5 packages (or CI on tag)
+//   3. Builds, tests; optionally publishes all 6 packages (or CI on tag)
 //   4. Commits, tags v<version>, pushes
 //   5. Creates a GitHub release with the new CHANGELOG section as notes
 //
@@ -31,6 +31,7 @@ const PACKAGES = [
   'packages/adapter-claude-code/package.json',
   'packages/adapter-codex/package.json',
   'packages/adapter-cursor/package.json',
+  'packages/adapter-opencode/package.json',
   'packages/server/package.json',
 ];
 
@@ -152,6 +153,7 @@ if (!skipPublish) {
     'packages/adapter-claude-code',
     'packages/adapter-codex',
     'packages/adapter-cursor',
+    'packages/adapter-opencode',
     'packages/server', // publishes as `tracebench`
   ];
   for (const dir of publishOrder) {

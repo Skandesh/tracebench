@@ -12,7 +12,9 @@
 import * as claudeCode from '@tracebench/adapter-claude-code';
 import * as codex from '@tracebench/adapter-codex';
 import * as cursor from '@tracebench/adapter-cursor';
+import * as opencode from '@tracebench/adapter-opencode';
 import type { CanonicalEvent, Harness, Session } from '@tracebench/core';
+import { join } from 'node:path';
 
 export interface AdapterDiscovered {
   session_id: string;
@@ -36,6 +38,9 @@ export interface AdapterModule {
   defaultRoot(): string;
   discover(root?: string, ctx?: AdapterDiscoverContext): AdapterDiscovered[];
   load(filePath: string): Promise<AdapterLoadResult>;
+  /** Optional: reuse expensive resources (e.g. DB snapshot) across an index pass. */
+  beginIndexPass?(root?: string): void;
+  endIndexPass?(): void;
 }
 
 const claudeCodeAdapter: AdapterModule = {
@@ -71,7 +76,23 @@ const cursorAdapter: AdapterModule = {
   load: (p) => cursor.loadSession(p),
 };
 
-export const ADAPTERS: AdapterModule[] = [claudeCodeAdapter, codexAdapter, cursorAdapter];
+const opencodeAdapter: AdapterModule = {
+  harness: 'opencode',
+  formatVersion: opencode.FORMAT_VERSION,
+  defaultRoot: opencode.defaultOpencodeRoot,
+  discover: (root) => opencode.discoverSessions(root),
+  load: (p) => opencode.loadSession(p),
+  beginIndexPass: (root) =>
+    opencode.beginOpencodeDbBatch(join(root ?? opencode.defaultOpencodeRoot(), 'opencode.db')),
+  endIndexPass: () => opencode.endOpencodeDbBatch(),
+};
+
+export const ADAPTERS: AdapterModule[] = [
+  claudeCodeAdapter,
+  codexAdapter,
+  cursorAdapter,
+  opencodeAdapter,
+];
 
 export function adapterByHarness(name: Harness): AdapterModule | undefined {
   return ADAPTERS.find((a) => a.harness === name);

@@ -5,7 +5,7 @@
 // App.tsx orchestrates the WHEN (which session is active, what should happen
 // when a user clicks "N err" on a card) but delegates the mechanics here.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Turn } from '../types';
 import { findErrorToolCallIds } from '../selectors';
 
@@ -13,7 +13,7 @@ const SCROLL_RETRY_FRAMES = 10;
 
 export interface ErrorNavigation {
   /** Ref to attach to the scrollable timeline container. */
-  timelineRef: React.RefObject<HTMLDivElement>;
+  timelineRef: React.RefObject<HTMLDivElement | null>;
   /** Event IDs of tool_calls whose tool_result is errored, in document order. */
   errorEventIds: string[];
   /** Currently active error in the cycle, or null when none. */
@@ -41,6 +41,8 @@ interface Params {
   detailLoading: boolean;
   /** Called by `navigateForSession` to switch sessions when the target isn't active. */
   setActiveId: (id: string) => void;
+  /** Shared scroll container for the timeline (also used by context inspector jumps). */
+  timelineRef: React.RefObject<HTMLDivElement | null>;
 }
 
 export function useErrorNavigation({
@@ -48,8 +50,8 @@ export function useErrorNavigation({
   activeId,
   detailLoading,
   setActiveId,
+  timelineRef,
 }: Params): ErrorNavigation {
-  const timelineRef = useRef<HTMLDivElement>(null);
   const [activeErrorIndex, setActiveErrorIndex] = useState<number | null>(null);
   const [pendingErrorNavSession, setPendingErrorNavSession] = useState<string | null>(null);
 

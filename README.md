@@ -19,8 +19,8 @@ This is local, no cloud, no telemetry. Apache 2.0.
 
 |  |  |
 |---|---|
-| Adapters live | `claude_code`, `codex`, `cursor` (Agent JSONL + Composer SQLite) |
-| Adapters planned | `opencode`; Cursor Composer SQLite (`state.vscdb`) for full chat history + tool results |
+| Adapters live | `claude_code`, `codex`, `cursor`, `opencode` |
+| Adapters planned | Cursor Composer SQLite (`state.vscdb`) for full chat history + tool results |
 | UI | Vite + React 18 — three-pane layout, tool-aware timeline (Bash/Read/Edit/Write/Grep + Codex `exec_command` and `apply_patch` aliases), analytics rail, harness tabs |
 | Backend | Fastify on `127.0.0.1`, SQLite via `better-sqlite3`, multi-adapter indexer |
 | Tests | 80+ across 6 packages |

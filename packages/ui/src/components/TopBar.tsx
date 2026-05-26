@@ -17,7 +17,7 @@ const HARNESSES: { id: Harness | 'all'; label: string; live: boolean }[] = [
   { id: 'all', label: 'All', live: true },
   { id: 'claude_code', label: HARNESS_LABELS.claude_code, live: true },
   { id: 'codex', label: HARNESS_LABELS.codex, live: true },
-  { id: 'opencode', label: HARNESS_LABELS.opencode, live: false },
+  { id: 'opencode', label: HARNESS_LABELS.opencode, live: true },
   { id: 'cursor', label: HARNESS_LABELS.cursor, live: true },
 ];
 

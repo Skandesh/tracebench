@@ -22,6 +22,8 @@ export interface ServerOptions {
   codexRoot?: string;
   /** Cursor projects root. Defaults to ~/.cursor/projects */
   cursorRoot?: string;
+  /** OpenCode data root (contains opencode.db). Defaults to XDG data home / opencode. */
+  opencodeRoot?: string;
   /** Cursor User data dir (global state.vscdb). Defaults to platform Cursor User path. */
   cursorUserDataDir?: string;
   /** Skip the startup index pass. */
@@ -64,6 +66,7 @@ export async function buildServer(opts: ServerOptions = {}): Promise<BuiltServer
     claude_code: opts.projectsRoot,
     codex: opts.codexRoot,
     cursor: opts.cursorRoot,
+    opencode: opts.opencodeRoot,
   } as const;
 
   const cursorUserDir = opts.cursorUserDataDir ?? defaultCursorUserDataDir();
@@ -95,6 +98,7 @@ export async function buildServer(opts: ServerOptions = {}): Promise<BuiltServer
         claude_code: opts.projectsRoot,
         codex: opts.codexRoot,
         cursor: opts.cursorRoot,
+        opencode: opts.opencodeRoot,
       },
       cursorGlobalDbPath,
       verbose: opts.verbose,

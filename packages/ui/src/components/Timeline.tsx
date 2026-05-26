@@ -1,5 +1,6 @@
 import {
   memo,
+  useCallback,
   useDeferredValue,
   useEffect,
   useMemo,
@@ -8,9 +9,15 @@ import {
   type Ref,
   type SetStateAction,
 } from 'react';
+import {
+  analyzeSessionContext,
+  type ToolResultContextImpact,
+} from '@tracebench/core/context-analyzer';
+import pricingTable from '@tracebench/core/pricing.json';
+import type { PricingTable } from '@tracebench/core/pricing-calc';
 import type { Session, Turn, CanonicalEvent } from '../types';
 import { Icons } from '../icons';
-import { formatCost, formatDuration, localTime } from '../format';
+import { formatCost, formatDuration, formatTokensCompact, localTime } from '../format';
 import { indexToolResultsByCall, listFilteredToolCalls } from '../selectors';
 import { ToolCallView } from '../tools/ToolCall';
 
@@ -28,6 +35,8 @@ interface Props {
   activeErrorIndex?: number | null;
   onErrorClick?: () => void;
   onClearErrorHighlight?: () => void;
+  inspectorHighlightId?: string | null;
+  onClearInspectorHighlight?: () => void;
 }
 
 export function Timeline({
@@ -41,6 +50,8 @@ export function Timeline({
   activeErrorIndex,
   onErrorClick,
   onClearErrorHighlight,
+  inspectorHighlightId,
+  onClearInspectorHighlight,
 }: Props) {
   const deferredFilterTool = useDeferredValue(filterTool);
   // Pending only while switching between tool filters — not when clearing to All.
@@ -50,6 +61,53 @@ export function Timeline({
     activeErrorIndex != null && errorEventIds && errorEventIds.length > 0
       ? errorEventIds[activeErrorIndex] ?? null
       : null;
+
+  const contextAnalysis = useMemo(
+    () =>
+      analyzeSessionContext(
+        turns as Parameters<typeof analyzeSessionContext>[0],
+        session.model,
+        { pricingTable: pricingTable as PricingTable, harness: session.harness },
+      ),
+    [turns, session.model, session.harness],
+  );
+
+  const impactByCallId = useMemo(() => {
+    const m = new Map<string, ToolResultContextImpact>();
+    for (const impact of contextAnalysis.toolResultImpacts) {
+      if (impact.call_event_id) m.set(impact.call_event_id, impact);
+    }
+    return m;
+  }, [contextAnalysis.toolResultImpacts]);
+
+  const impactByResultId = useMemo(() => {
+    const m = new Map<string, ToolResultContextImpact>();
+    for (const impact of contextAnalysis.toolResultImpacts) {
+      if (impact.result_event_id) m.set(impact.result_event_id, impact);
+    }
+    return m;
+  }, [contextAnalysis.toolResultImpacts]);
+
+  const turnDeltaByIndex = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const d of contextAnalysis.turnDeltas) {
+      m.set(d.turn_index, d.delta_tokens);
+    }
+    return m;
+  }, [contextAnalysis.turnDeltas]);
+
+  const isEventHighlighted = useCallback(
+    (callId: string, resultId?: string) =>
+      callId === highlightedEventId ||
+      callId === inspectorHighlightId ||
+      (resultId != null && resultId === inspectorHighlightId),
+    [highlightedEventId, inspectorHighlightId],
+  );
+
+  const onClearHighlight = useCallback(() => {
+    onClearErrorHighlight?.();
+    onClearInspectorHighlight?.();
+  }, [onClearErrorHighlight, onClearInspectorHighlight]);
 
   const toolCounts = useMemo(() => {
     const counts: Record<string, number> = {};
@@ -120,8 +178,13 @@ export function Timeline({
             key={turn.turn_id}
             turnNumber={idx + 1}
             turn={turn}
+            turnDelta={turnDeltaByIndex.get(idx) ?? 0}
             highlightedEventId={highlightedEventId}
-            onClearHighlight={onClearErrorHighlight}
+            inspectorHighlightId={inspectorHighlightId}
+            impactByCallId={impactByCallId}
+            impactByResultId={impactByResultId}
+            onClearHighlight={onClearHighlight}
+            isEventHighlighted={isEventHighlighted}
           />
         ))}
         {!loading && showFiltered && filterPending && (
@@ -146,8 +209,9 @@ export function Timeline({
                   call={call}
                   result={result}
                   defaultOpen={false}
-                  highlighted={call.event_id === highlightedEventId}
-                  onClearHighlight={onClearErrorHighlight}
+                  contextImpact={impactByCallId.get(call.event_id)}
+                  highlighted={isEventHighlighted(call.event_id, result?.event_id)}
+                  onClearHighlight={onClearHighlight}
                 />
               ))}
             </div>
@@ -259,33 +323,68 @@ function SessionHeader({
 const TurnGroup = memo(function TurnGroup({
   turnNumber,
   turn,
+  turnDelta,
   highlightedEventId,
+  inspectorHighlightId,
+  impactByCallId,
+  impactByResultId,
   onClearHighlight,
+  isEventHighlighted,
 }: {
   turnNumber: number;
   turn: Turn;
+  turnDelta: number;
   highlightedEventId?: string | null;
+  inspectorHighlightId?: string | null;
+  impactByCallId: Map<string, ToolResultContextImpact>;
+  impactByResultId: Map<string, ToolResultContextImpact>;
   onClearHighlight?: () => void;
+  isEventHighlighted: (callId: string, resultId?: string) => boolean;
 }) {
   const resultByCallId = useMemo(() => indexToolResultsByCall(turn.events), [turn.events]);
+  const callIdsInTurn = useMemo(() => {
+    const s = new Set<string>();
+    for (const e of turn.events) {
+      if (e.event_type === 'tool_call') s.add(e.event_id);
+    }
+    return s;
+  }, [turn.events]);
 
   return (
     <div className="tb-turn-group">
       <div className="tb-turn-rail">
         <span className="tb-turn-num">turn {turnNumber}</span>
+        {turnDelta > 0 && (
+          <span className="tb-turn-delta">+{formatTokensCompact(turnDelta)}</span>
+        )}
         <span className="tb-turn-line" />
       </div>
       <div className="tb-turn-items">
         {turn.events.map((e) => {
-          if (e.event_type === 'tool_result') return null;
+          if (e.event_type === 'tool_result') {
+            const parentInTurn = e.parent_event_id != null && callIdsInTurn.has(e.parent_event_id);
+            if (parentInTurn && e.metadata?.orphan !== true) return null;
+            const impact = impactByResultId.get(e.event_id);
+            return (
+              <OrphanToolResultView
+                key={e.event_id}
+                event={e}
+                impact={impact}
+                highlighted={e.event_id === inspectorHighlightId || e.event_id === highlightedEventId}
+                onClearHighlight={onClearHighlight}
+              />
+            );
+          }
           if (e.event_type === 'meta') return null;
           if (e.event_type === 'tool_call') {
+            const result = resultByCallId.get(e.event_id);
             return (
               <ToolCallView
                 key={e.event_id}
                 call={e}
-                result={resultByCallId.get(e.event_id)}
-                highlighted={e.event_id === highlightedEventId}
+                result={result}
+                contextImpact={impactByCallId.get(e.event_id)}
+                highlighted={isEventHighlighted(e.event_id, result?.event_id)}
                 onClearHighlight={onClearHighlight}
               />
             );
@@ -296,6 +395,59 @@ const TurnGroup = memo(function TurnGroup({
     </div>
   );
 });
+
+function OrphanToolResultView({
+  event,
+  impact,
+  highlighted,
+  onClearHighlight,
+}: {
+  event: CanonicalEvent;
+  impact?: ToolResultContextImpact;
+  highlighted?: boolean;
+  onClearHighlight?: () => void;
+}) {
+  useHighlightAutoClear(highlighted, onClearHighlight);
+  const output =
+    typeof event.tool.output === 'string'
+      ? event.tool.output
+      : event.tool.output != null
+        ? JSON.stringify(event.tool.output)
+        : '';
+
+  return (
+    <div
+      className={`tb-tool tb-tool-orphan${highlighted ? ' tb-tool-highlighted' : ''}`}
+      data-event-id={event.event_id}
+    >
+      <div className="tb-tool-head tb-tool-head-static">
+        <span className="tb-tool-ico tb-tool-read"><Icons.Hash size={12} /></span>
+        <span className="tb-tool-name">Orphan result</span>
+        <span className="tb-tool-summary tb-tool-log-missing">
+          Tool call missing from log — often after compaction
+        </span>
+        <span className="tb-tool-meta">
+          {impact && impact.estimated_tokens > 0 && (
+            <span className="tb-tool-tok">~{formatTokensCompact(impact.estimated_tokens)} tok</span>
+          )}
+        </span>
+      </div>
+      {output && (
+        <div className="tb-tool-body tb-read-body">
+          <pre className="tb-pre">{output.slice(0, 2000)}{output.length > 2000 ? '\n…' : ''}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function useHighlightAutoClear(highlighted: boolean | undefined, onClearHighlight: (() => void) | undefined): void {
+  useEffect(() => {
+    if (!highlighted) return;
+    const timer = setTimeout(() => onClearHighlight?.(), 1200);
+    return () => clearTimeout(timer);
+  }, [highlighted, onClearHighlight]);
+}
 
 function MessageEntry({ event }: { event: CanonicalEvent }) {
   const content = typeof event.content === 'string' ? event.content : event.content ? JSON.stringify(event.content) : '';

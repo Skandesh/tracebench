@@ -1,6 +1,6 @@
 {
   "name": "@tracebench/adapter-opencode",
-  "version": "0.2.7",
+  "version": "0.3.0",
   "description": "Tracebench adapter for OpenCode sessions (~/.local/share/opencode/opencode.db).",
   "license": "Apache-2.0",
   "author": "Skandesh",

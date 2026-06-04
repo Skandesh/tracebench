@@ -1,6 +1,6 @@
 {
   "name": "@tracebench/adapter-claude-code",
-  "version": "0.2.7",
+  "version": "0.3.0",
   "description": "Tracebench adapter for Claude Code session logs (~/.claude/projects/**/*.jsonl).",
   "license": "Apache-2.0",
   "author": "Skandesh",

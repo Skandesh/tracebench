@@ -6,6 +6,7 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-06-04
 ### Added
 - **OpenCode adapter** — reads sessions from `~/.local/share/opencode/opencode.db` (messages, parts, tools, reasoning, compaction).
 - **Context window analyzer** — session-mode composition bar, attention zones, waste detection, and advisory suggestions in the analytics rail (`analyzeSessionContext` in `@tracebench/core`).

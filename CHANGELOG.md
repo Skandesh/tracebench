@@ -6,6 +6,7 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-06-05
 ### Added
 - **Context pressure indicator** — 80% window threshold marker, fill-ratio sparkline with active turn, and elevated/critical banners when reconstructed context nears the model limit.
 

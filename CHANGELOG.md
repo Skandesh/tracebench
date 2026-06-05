@@ -6,6 +6,9 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
 
 ## [Unreleased]
 
+### Added
+- **Context pressure indicator** — 80% window threshold marker, fill-ratio sparkline with active turn, and elevated/critical banners when reconstructed context nears the model limit.
+
 ## [0.3.0] — 2026-06-04
 ### Added
 - **OpenCode adapter** — reads sessions from `~/.local/share/opencode/opencode.db` (messages, parts, tools, reasoning, compaction).

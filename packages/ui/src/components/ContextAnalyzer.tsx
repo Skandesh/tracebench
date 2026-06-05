@@ -1,7 +1,12 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import {
   analyzeSessionContext,
+  CONTEXT_PRESSURE_THRESHOLD,
+  contextFillRatio,
+  contextPressureLevel,
   guessContextMax,
+  snapshotTokenTotal,
+  type ContextPressureLevel,
   type MissingLogItem,
   type SessionContextAnalysis,
   type ToolResultContextImpact,
@@ -48,6 +53,7 @@ const MISSING_LABELS: Record<MissingLogItem['kind'], string> = {
 };
 
 const OFFENDER_PREVIEW = 5;
+const PRESSURE_THRESHOLD_PCT = CONTEXT_PRESSURE_THRESHOLD * 100;
 
 export function ContextAnalyzer({ session, turns, onJumpToEvent }: Props) {
   const analysis = useMemo(
@@ -63,7 +69,12 @@ export function ContextAnalyzer({ session, turns, onJumpToEvent }: Props) {
     [turns, session.model, session.harness],
   );
 
-  const contextSeries = useMemo(() => {
+  const fillPctSeries = useMemo(
+    () => analysis.fillRatioByTurn.map((r) => r * 100),
+    [analysis.fillRatioByTurn],
+  );
+
+  const billedInputSeries = useMemo(() => {
     let running = 0;
     const series: number[] = [];
     for (const t of turns) {
@@ -85,9 +96,14 @@ export function ContextAnalyzer({ session, turns, onJumpToEvent }: Props) {
 
   const safeIndex = Math.min(Math.max(0, turnIndex), Math.max(0, analysis.snapshots.length - 1));
   const snapshot = analysis.snapshots[safeIndex];
-  const totalTokens = snapshot?.components.reduce((s, c) => s + c.token_count, 0) ?? 0;
-  const ctxMax = snapshot?.max_context_tokens ?? guessContextMax(session.model, pricingTable as PricingTable);
-  const peakPct = Math.min(100, ctxMax > 0 ? (totalTokens / ctxMax) * 100 : 0);
+  const totalTokens = snapshot ? snapshotTokenTotal(snapshot) : 0;
+  const ctxMax =
+    snapshot?.max_context_tokens ??
+    analysis.maxContextTokens ??
+    guessContextMax(session.model, pricingTable as PricingTable);
+  const fillRatio = snapshot != null ? contextFillRatio(totalTokens, ctxMax) : analysis.fillRatio;
+  const peakPct = fillRatio * 100;
+  const pressureLevel: ContextPressureLevel = contextPressureLevel(fillRatio);
   const categoryEntries = Object.entries(analysis.categoryTotals) as [ContextComponentKind, number][];
   const visibleOffenders = showAllOffenders
     ? analysis.topOffenders
@@ -132,17 +148,54 @@ export function ContextAnalyzer({ session, turns, onJumpToEvent }: Props) {
           Estimated composition at a chosen turn. Sizes are approximate (~4 chars per token).
         </p>
 
-        <div className="tb-ctx-peak">
+        {pressureLevel !== 'ok' && (
+          <div className={`tb-ctx-pressure tb-ctx-pressure-${pressureLevel}`} role="status">
+            {pressureLevel === 'critical' ? (
+              <>
+                <strong>Context nearly full</strong> — compaction or summarization is likely on the next turns.
+              </>
+            ) : (
+              <>
+                <strong>Approaching window limit (~80%)</strong> — many agents start compressing history around here.
+              </>
+            )}
+          </div>
+        )}
+
+        <div className={`tb-ctx-peak tb-ctx-peak-${pressureLevel}`}>
           <span className="tb-ctx-peak-val">{peakPct.toFixed(0)}%</span>
           <span className="tb-mute">
             {formatTokensCompact(totalTokens)} of {formatTokensCompact(ctxMax)}
           </span>
         </div>
 
-        <Sparkline data={contextSeries} />
-        <div className="tb-ctx-legend">
-          <span><Icons.Dot size={6} color="var(--accent)" /> Billed input peak per turn</span>
+        <div className="tb-ctx-window-track" aria-hidden="true">
+          <div className="tb-ctx-window-fill" style={{ width: `${peakPct}%` }} />
+          <div
+            className="tb-ctx-window-mark"
+            style={{ left: `${PRESSURE_THRESHOLD_PCT}%` }}
+            title="~80% — typical agent compaction threshold"
+          />
         </div>
+
+        <FillSparkline data={fillPctSeries} activeIndex={safeIndex} thresholdPct={PRESSURE_THRESHOLD_PCT} />
+        <div className="tb-ctx-legend">
+          <span>
+            <Icons.Dot size={6} color="var(--accent)" /> Reconstructed fill % per turn
+          </span>
+          <span className="tb-ctx-legend-mark">80% line</span>
+        </div>
+
+        {billedInputSeries.some((v) => v > 0) && (
+          <>
+            <Sparkline data={billedInputSeries} stroke="var(--text-faint)" fill="var(--text-faint)" />
+            <div className="tb-ctx-legend">
+              <span>
+                <Icons.Dot size={6} color="var(--text-faint)" /> Billed input peak per turn (from logs)
+              </span>
+            </div>
+          </>
+        )}
 
         {analysis.snapshots.length > 1 && (
           <div className="tb-ctx-turn-select">
@@ -170,6 +223,7 @@ export function ContextAnalyzer({ session, turns, onJumpToEvent }: Props) {
             snapshot={snapshot}
             zones={analysis.attentionZones}
             totalTokens={totalTokens}
+            maxSegTokens={Math.max(...snapshot.components.map((c) => c.token_count), 1)}
           />
         )}
 
@@ -305,8 +359,18 @@ function JumpButton({
   return <div className={className}>{children}</div>;
 }
 
-function Sparkline({ data }: { data: number[] }) {
-  const w = 280, h = 40, pad = 4;
+function Sparkline({
+  data,
+  stroke = 'var(--accent)',
+  fill = 'var(--accent)',
+}: {
+  data: number[];
+  stroke?: string;
+  fill?: string;
+}) {
+  const w = 280,
+    h = 40,
+    pad = 4;
   const max = Math.max(...data, 1);
   const step = (w - pad * 2) / Math.max(data.length - 1, 1);
   const points = data.map((v, i) => `${pad + i * step},${h - pad - (v / max) * (h - pad * 2)}`);
@@ -314,8 +378,53 @@ function Sparkline({ data }: { data: number[] }) {
   const area = `${path} L${pad + (data.length - 1) * step},${h - pad} L${pad},${h - pad} Z`;
   return (
     <svg className="tb-spark" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
-      <path d={area} fill="var(--accent)" opacity="0.1" />
-      <path d={path} stroke="var(--accent)" strokeWidth="1.5" fill="none" />
+      <path d={area} fill={fill} opacity="0.1" />
+      <path d={path} stroke={stroke} strokeWidth="1.5" fill="none" />
+    </svg>
+  );
+}
+
+function FillSparkline({
+  data,
+  activeIndex,
+  thresholdPct,
+}: {
+  data: number[];
+  activeIndex: number;
+  thresholdPct: number;
+}) {
+  const w = 280,
+    h = 40,
+    pad = 4;
+  const max = 100;
+  const step = (w - pad * 2) / Math.max(data.length - 1, 1);
+  const y = (v: number) => h - pad - (v / max) * (h - pad * 2);
+  const points = data.map((v, i) => `${pad + i * step},${y(v)}`);
+  const path = points.length > 0 ? `M${points.join(' L')}` : '';
+  const area =
+    points.length > 0
+      ? `${path} L${pad + (data.length - 1) * step},${h - pad} L${pad},${h - pad} Z`
+      : '';
+  const thresholdY = y(thresholdPct);
+  const activeX = pad + activeIndex * step;
+
+  return (
+    <svg className="tb-spark tb-spark-fill" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
+      <line
+        x1={pad}
+        x2={w - pad}
+        y1={thresholdY}
+        y2={thresholdY}
+        stroke="oklch(0.65 0.12 55)"
+        strokeWidth="1"
+        strokeDasharray="4 3"
+        opacity="0.85"
+      />
+      {area && <path d={area} fill="var(--accent)" opacity="0.12" />}
+      {path && <path d={path} stroke="var(--accent)" strokeWidth="1.5" fill="none" />}
+      {data.length > 0 && (
+        <circle cx={activeX} cy={y(data[activeIndex] ?? 0)} r="3" fill="var(--accent)" />
+      )}
     </svg>
   );
 }
@@ -324,12 +433,19 @@ function CompositionBar({
   snapshot,
   zones,
   totalTokens,
+  maxSegTokens,
 }: {
   snapshot: SessionContextAnalysis['snapshots'][number];
   zones: SessionContextAnalysis['attentionZones'];
   totalTokens: number;
+  maxSegTokens: number;
 }) {
   const pct = (n: number) => (totalTokens > 0 ? (n / totalTokens) * 100 : 0);
+  const segOpacity = (tokenCount: number, cached: boolean | null) => {
+    const heat = 0.45 + 0.55 * (tokenCount / maxSegTokens);
+    const base = cached ? heat * 0.7 : heat;
+    return Math.min(1, base);
+  };
 
   return (
     <div className="tb-ctx-compose-wrap">
@@ -341,7 +457,7 @@ function CompositionBar({
             style={{
               width: `${pct(c.token_count)}%`,
               background: KIND_COLORS[c.kind],
-              opacity: c.cached ? 0.55 : 0.85,
+              opacity: segOpacity(c.token_count, c.cached),
             }}
             title={`${KIND_LABELS[c.kind]}: ${c.token_count.toLocaleString()} tokens`}
           />

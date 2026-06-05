@@ -15,6 +15,27 @@ const DEFAULT_CONTEXT_MAX = 200_000;
 const DEFAULT_VALLEY_THRESHOLD = 2_000;
 const CHARS_PER_TOKEN = 4;
 
+/** Typical point where agent frameworks summarize or compact history (~80% of window). */
+export const CONTEXT_PRESSURE_THRESHOLD = 0.8;
+export const CONTEXT_PRESSURE_CRITICAL = 0.95;
+
+export type ContextPressureLevel = 'ok' | 'elevated' | 'critical';
+
+export function snapshotTokenTotal(snapshot: ContextSnapshot): number {
+  return snapshot.components.reduce((sum, c) => sum + c.token_count, 0);
+}
+
+export function contextFillRatio(totalTokens: number, maxContextTokens: number): number {
+  if (maxContextTokens <= 0) return 0;
+  return Math.min(1, totalTokens / maxContextTokens);
+}
+
+export function contextPressureLevel(fillRatio: number): ContextPressureLevel {
+  if (fillRatio >= CONTEXT_PRESSURE_CRITICAL) return 'critical';
+  if (fillRatio >= CONTEXT_PRESSURE_THRESHOLD) return 'elevated';
+  return 'ok';
+}
+
 const METHODOLOGY_NOTE =
   'Attention zones use a positional heuristic (first 20% primacy, middle 60% valley, last 20% recency) inspired by "lost in the middle" findings (Liu et al., 2023). This is not a direct measurement of model attention.';
 
@@ -94,6 +115,12 @@ export interface MissingLogItem {
 
 export interface SessionContextAnalysis {
   snapshots: ContextSnapshot[];
+  maxContextTokens: number;
+  /** Reconstructed fill ratio at the latest turn (0–1). */
+  fillRatio: number;
+  pressureLevel: ContextPressureLevel;
+  /** Per-turn reconstructed fill ratio, aligned with `snapshots`. */
+  fillRatioByTurn: number[];
   /** Zones based on the latest turn's total context size. */
   attentionZones: AttentionZones;
   valleyFlags: ValleyFlag[];
@@ -159,7 +186,12 @@ export function analyzeSessionContext(
     : [];
 
   const wasteItems = detectWaste(turns, resolvedModel, table);
-  const suggestions = buildSuggestions(wasteItems, valleyFlags);
+  const fillRatioByTurn = snapshots.map((s) =>
+    contextFillRatio(snapshotTokenTotal(s), s.max_context_tokens),
+  );
+  const fillRatio = fillRatioByTurn[fillRatioByTurn.length - 1] ?? 0;
+  const pressureLevel = contextPressureLevel(fillRatio);
+  const suggestions = buildSuggestions(wasteItems, valleyFlags, fillRatio);
   const growthRate = computeGrowthRate(snapshots);
 
   const harness =
@@ -181,6 +213,10 @@ export function analyzeSessionContext(
 
   return {
     snapshots,
+    maxContextTokens: maxContext,
+    fillRatio,
+    pressureLevel,
+    fillRatioByTurn,
     attentionZones,
     valleyFlags,
     wasteItems,
@@ -487,8 +523,17 @@ function estimateInputCost(
 function buildSuggestions(
   wasteItems: WasteItem[],
   valleyFlags: ValleyFlag[],
+  fillRatio: number,
 ): ContextSuggestion[] {
   const suggestions: ContextSuggestion[] = [];
+
+  if (fillRatio >= CONTEXT_PRESSURE_THRESHOLD) {
+    const pct = Math.round(fillRatio * 100);
+    suggestions.push({
+      kind: 'compress',
+      reason: `Reconstructed context is ~${pct}% of the model window — many agents compact or summarize beyond ~80%`,
+    });
+  }
 
   const dupes = wasteItems.filter((w) => w.kind === 'duplicate_tool_call');
   if (dupes.length > 0) {

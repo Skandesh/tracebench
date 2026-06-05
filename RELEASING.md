@@ -9,11 +9,11 @@ CHANGELOG [Unreleased]  →  pnpm release patch --skip-publish  →  tag vX.Y.Z 
                                                               ↓
                                               GitHub Actions (release.yml)
                                                               ↓
-                                              npm: all 5 packages @ X.Y.Z
+                                              npm: all 6 packages @ X.Y.Z
 ```
 
 Local machine: changelog, version bump, build, test, git tag, GitHub release notes.  
-CI: npm publish for `tracebench` + four `@tracebench/*` packages (OIDC, no token or passkey).
+CI: npm publish for `tracebench` + five `@tracebench/*` packages (OIDC, no token or passkey).
 
 ## TL;DR
 
@@ -37,8 +37,9 @@ Legacy local publish (passkey or npm token): omit `--skip-publish`.
    - `@tracebench/adapter-claude-code`
    - `@tracebench/adapter-codex`
    - `@tracebench/adapter-cursor`
+   - `@tracebench/adapter-opencode` *(required since v0.3.0 — first publish failed without this)*
 
-   Use the same values for all five:
+   Use the same values for all six:
 
    | Field | Value |
    |--------|--------|
@@ -75,7 +76,7 @@ The script (`scripts/release.mjs`):
 
 1. Checks the working tree is clean.
 2. Promotes `## [Unreleased]` → `## [X.Y.Z] — YYYY-MM-DD` (empty `[Unreleased]` left at top).
-3. Bumps version on all five publishable packages.
+3. Bumps version on all six publishable packages.
 4. `pnpm install --lockfile-only`
 5. `pnpm -r build && pnpm -r test` (aborts on failure)
 6. Skips `pnpm publish` when `--skip-publish` is set
@@ -84,7 +85,7 @@ The script (`scripts/release.mjs`):
 
 ### 3. Verify CI publish
 
-Open **Actions → Release** for the `vX.Y.Z` run. On success, all five packages show the new version on npm:
+Open **Actions → Release** for the `vX.Y.Z` run. On success, all six packages show the new version on npm:
 
 ```bash
 npm view tracebench version
@@ -101,7 +102,7 @@ The `tracebench` tarball is built in CI via each package's `prepack` (UI bundle,
 - **MINOR** — features, new adapters (backwards-compatible).
 - **PATCH** — fixes, perf, docs, internal refactors.
 
-All five publishable packages share one version. `tracebench` pins exact versions of the scoped deps — ship together.
+All six publishable packages share one version. `tracebench` pins exact versions of the scoped deps — ship together.
 
 ## What the npm page shows
 
@@ -127,7 +128,7 @@ pnpm release patch --skip-publish
 
 **Tag pushed but CI publish failed** (or only some packages on npm):
 
-1. Fix the workflow or Trusted Publisher config.
+1. Fix the workflow or Trusted Publisher config. v0.3.0 failed on `@tracebench/adapter-opencode` (404) — add Trusted Publisher for that package, then release the next patch.
 2. Bump to the next patch and release again — npm versions are immutable.
 
 **Published locally by mistake without `--skip-publish`:** fine if all five succeeded; otherwise bump and let CI publish on the next tag.

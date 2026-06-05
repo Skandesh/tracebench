@@ -1475,6 +1475,60 @@ kbd {
 .tb-f-w { color: oklch(0.78 0.14 295); }
 
 /* Context analyzer */
+.tb-ctx-pressure {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-mute);
+}
+.tb-ctx-pressure strong {
+  color: var(--text);
+  font-weight: 500;
+}
+.tb-ctx-pressure-elevated {
+  background: oklch(0.28 0.04 75 / 0.35);
+  border: 1px solid oklch(0.55 0.1 75 / 0.35);
+}
+.tb-ctx-pressure-critical {
+  background: oklch(0.28 0.06 25 / 0.4);
+  border: 1px solid oklch(0.55 0.14 25 / 0.4);
+}
+.tb-ctx-window-track {
+  position: relative;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-elev-2);
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+.tb-ctx-window-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent), oklch(0.72 0.14 250));
+  transition: width 0.15s ease;
+}
+.tb-ctx-peak-elevated .tb-ctx-peak-val {
+  color: oklch(0.82 0.12 75);
+}
+.tb-ctx-peak-critical .tb-ctx-peak-val {
+  color: oklch(0.78 0.14 25);
+}
+.tb-ctx-window-mark {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  margin-left: -1px;
+  background: oklch(0.65 0.12 55);
+  opacity: 0.9;
+  pointer-events: none;
+}
+.tb-ctx-legend-mark {
+  color: oklch(0.65 0.1 55);
+  font-size: 10px;
+}
 .tb-ctx-peak {
   display: flex;
   align-items: baseline;

@@ -2,6 +2,9 @@ import { describe, it, expect } from 'vitest';
 import type { CanonicalEvent, Turn } from './schema.js';
 import {
   analyzeSessionContext,
+  contextFillRatio,
+  contextPressureLevel,
+  CONTEXT_PRESSURE_THRESHOLD,
   guessContextMax,
   __testables,
 } from './context-analyzer.js';
@@ -55,6 +58,18 @@ function turn(id: string, events: CanonicalEvent[]): Turn {
     events,
   };
 }
+
+describe('contextPressureLevel', () => {
+  it('classifies fill ratios', () => {
+    expect(contextPressureLevel(0.5)).toBe('ok');
+    expect(contextPressureLevel(CONTEXT_PRESSURE_THRESHOLD)).toBe('elevated');
+    expect(contextPressureLevel(0.96)).toBe('critical');
+  });
+
+  it('caps fill ratio at 1', () => {
+    expect(contextFillRatio(300_000, 200_000)).toBe(1);
+  });
+});
 
 describe('guessContextMax', () => {
   it('uses pricing table max for known models', () => {
@@ -249,10 +264,39 @@ describe('analyzeSessionContext', () => {
   it('returns empty analysis for no turns', () => {
     const analysis = analyzeSessionContext([], 'claude-sonnet-4-5', { pricingTable: table });
     expect(analysis.snapshots).toHaveLength(0);
+    expect(analysis.fillRatio).toBe(0);
+    expect(analysis.pressureLevel).toBe('ok');
+    expect(analysis.fillRatioByTurn).toHaveLength(0);
     expect(analysis.wasteItems).toHaveLength(0);
     expect(analysis.growthRate).toBeNull();
     expect(analysis.toolResultImpacts).toHaveLength(0);
     expect(analysis.missingLogs).toHaveLength(0);
+  });
+
+  it('suggests compression when fill crosses 80%', () => {
+    const turns = [
+      turn('t1', [
+        baseEvent({
+          event_id: 'out1',
+          event_type: 'tool_result',
+          role: 'tool',
+          content: null,
+          tool: {
+            name: 'Read',
+            input: null,
+            output: 'x'.repeat(640_000),
+            status: 'success',
+            error_message: null,
+          },
+        }),
+      ]),
+    ];
+    const analysis = analyzeSessionContext(turns, 'claude-sonnet-4-5', { pricingTable: table });
+    expect(analysis.fillRatio).toBeGreaterThanOrEqual(CONTEXT_PRESSURE_THRESHOLD);
+    expect(analysis.pressureLevel).not.toBe('ok');
+    expect(
+      analysis.suggestions.some((s) => s.kind === 'compress' && s.reason.includes('80%')),
+    ).toBe(true);
   });
 
   it('computes growthRate across turns', () => {

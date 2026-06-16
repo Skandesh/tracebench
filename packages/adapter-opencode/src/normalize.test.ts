@@ -25,6 +25,7 @@ describe('OpenCode adapter', () => {
     expect(found).toHaveLength(1);
     expect(found[0]!.session_id).toBe('ses_fixture_001');
     expect(found[0]!.file_path).toContain('ses_fixture_001@');
+    expect(found[0]!.size).toBeGreaterThan(100);
   });
 
   it('normalizes user message, thinking, assistant text, and tool call/result', async () => {

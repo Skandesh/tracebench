@@ -8,10 +8,13 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from '@tracebench/core';
 import { defaultCursorUserDataDir } from '@tracebench/adapter-cursor';
-import type { TracebenchDb } from '@tracebench/core';
+import type { Harness, TracebenchDb } from '@tracebench/core';
 import { defaultDbPath } from './paths.js';
 import { registerRoutes } from './routes.js';
 import { indexSessions } from './indexer.js';
+
+const DEFAULT_STARTUP_MAX_SESSIONS_PER_HARNESS = 200;
+const DEFAULT_STARTUP_MAX_SOURCE_BYTES_PER_HARNESS = 1024 ** 3;
 
 export interface ServerOptions {
   /** SQLite path. Defaults to ~/.tracebench/tracebench.db */
@@ -28,6 +31,13 @@ export interface ServerOptions {
   cursorUserDataDir?: string;
   /** Skip the startup index pass. */
   noIndex?: boolean;
+  /** Preserve current startup freshness while bounding first-run/deep materialization. */
+  indexAll?: boolean;
+  maxSessionsPerHarness?: number;
+  maxSourceBytesPerHarness?: number;
+  sinceMs?: number;
+  only?: Harness[];
+  rawMode?: 'full' | 'reference';
   /** Verbose stderr logging. */
   verbose?: boolean;
 }
@@ -55,7 +65,8 @@ function findUiBuildDir(): string | null {
 }
 
 export async function buildServer(opts: ServerOptions = {}): Promise<BuiltServer> {
-  const db = openDb({ path: opts.dbPath ?? defaultDbPath() });
+  const dbPath = opts.dbPath ?? defaultDbPath();
+  const db = openDb({ path: dbPath });
   const app = Fastify({
     logger: opts.verbose
       ? { level: 'info' }
@@ -72,7 +83,7 @@ export async function buildServer(opts: ServerOptions = {}): Promise<BuiltServer
   const cursorUserDir = opts.cursorUserDataDir ?? defaultCursorUserDataDir();
   const cursorGlobalDbPath = join(cursorUserDir, 'globalStorage', 'state.vscdb');
 
-  await registerRoutes(app, { db, roots, cursorGlobalDbPath });
+  await registerRoutes(app, { db, dbPath, roots, cursorGlobalDbPath });
 
   // Static UI: if a built UI exists, serve it. Otherwise a friendly fallback
   // page that explains how to start the dev UI.
@@ -101,6 +112,15 @@ export async function buildServer(opts: ServerOptions = {}): Promise<BuiltServer
         opencode: opts.opencodeRoot,
       },
       cursorGlobalDbPath,
+      only: opts.only,
+      sinceMs: opts.sinceMs,
+      maxSessionsPerHarness: opts.indexAll
+        ? undefined
+        : (opts.maxSessionsPerHarness ?? DEFAULT_STARTUP_MAX_SESSIONS_PER_HARNESS),
+      maxSourceBytesPerHarness: opts.indexAll
+        ? undefined
+        : (opts.maxSourceBytesPerHarness ?? DEFAULT_STARTUP_MAX_SOURCE_BYTES_PER_HARNESS),
+      rawMode: opts.rawMode ?? 'reference',
       verbose: opts.verbose,
     });
     if (opts.verbose) {
@@ -108,7 +128,7 @@ export async function buildServer(opts: ServerOptions = {}): Promise<BuiltServer
         .map(([h, s]) => `${h}=${s.indexed}/${s.scanned}`)
         .join(' ');
       process.stderr.write(
-        `[tracebench] indexed ${result.indexed} / ${result.scanned} sessions (${perHarness}; ${result.skipped} unchanged, ${result.errors.length} errors) in ${result.duration_ms}ms\n`,
+        `[tracebench] indexed ${result.indexed} / ${result.scanned} sessions (${perHarness}; ${result.skipped} unchanged, ${result.deferred} deferred, ${result.errors.length} errors) in ${result.duration_ms}ms\n`,
       );
     }
   }

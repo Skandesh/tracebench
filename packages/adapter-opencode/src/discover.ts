@@ -28,7 +28,7 @@ export function discoverSessions(root?: string): DiscoveredOpencodeSession[] {
     session_id: s.sessionId,
     file_path: opencodeDbUri(s.sessionId, dbPath),
     mtime_ms: s.timeUpdated || dbMtime,
-    size: s.messageCount,
+    size: s.sourceBytes,
   }));
 }
 

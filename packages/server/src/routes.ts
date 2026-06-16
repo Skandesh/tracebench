@@ -10,14 +10,17 @@ import {
   getSessionEvents,
   getSessionTurns,
   getToolCounts,
+  listDiscoveredSessions,
   loadPricingTable,
   type Harness,
   type TracebenchDb,
 } from '@tracebench/core';
 import { indexSessions } from './indexer.js';
+import { buildStorageReport, parseByteSize, parseSinceMs } from './storage.js';
 
 export interface RouteContext {
   db: TracebenchDb;
+  dbPath?: string;
   roots: Partial<Record<Harness, string | undefined>>;
   cursorGlobalDbPath?: string;
 }
@@ -92,15 +95,105 @@ export async function registerRoutes(
     return table;
   });
 
-  // POST trigger a re-index; returns the same shape as startup.
-  app.post('/api/reindex', async () => {
-    const roots: Partial<Record<Harness, string>> = {};
-    for (const [k, v] of Object.entries(ctx.roots)) {
-      if (typeof v === 'string') roots[k as Harness] = v;
-    }
-    return indexSessions(ctx.db, {
-      roots,
+  app.get('/api/storage', async () => {
+    return buildStorageReport({
+      db: ctx.db,
+      dbPath: ctx.dbPath,
+      roots: ctx.roots,
       cursorGlobalDbPath: ctx.cursorGlobalDbPath,
     });
   });
+
+  app.get<{
+    Querystring: {
+      harness?: string;
+      session_id?: string;
+    };
+  }>('/api/discovered-sessions', async (req) => {
+    const rawHarness = req.query.harness;
+    const harness =
+      rawHarness && rawHarness !== 'all' ? (rawHarness as Harness) : undefined;
+    return {
+      sessions: listDiscoveredSessions(ctx.db, {
+        harness,
+        session_id: req.query.session_id,
+      }),
+    };
+  });
+
+  // POST triggers a re-index; returns the same shape as startup.
+  app.post<{
+    Querystring: {
+      harness?: string;
+      full?: string;
+      indexAll?: string;
+      maxSessions?: string;
+      maxSourceBytes?: string;
+      since?: string;
+      raw?: string;
+    };
+  }>('/api/reindex', async (req) => {
+    const only = parseHarnessList(req.query.harness);
+    return indexSessions(ctx.db, {
+      roots: indexRoots(ctx),
+      cursorGlobalDbPath: ctx.cursorGlobalDbPath,
+      only,
+      full: truthy(req.query.full),
+      maxSessionsPerHarness: truthy(req.query.indexAll)
+        ? undefined
+        : parseOptionalInt(req.query.maxSessions),
+      maxSourceBytesPerHarness: truthy(req.query.indexAll)
+        ? undefined
+        : parseOptionalBytes(req.query.maxSourceBytes),
+      sinceMs: req.query.since ? parseSinceMs(req.query.since) : undefined,
+      rawMode: req.query.raw === 'full' ? 'full' : 'reference',
+    });
+  });
+
+  app.post<{ Params: { id: string } }>(
+    '/api/sessions/:id/index',
+    async (req, reply) => {
+      const discovered = listDiscoveredSessions(ctx.db, { session_id: req.params.id });
+      if (discovered.length === 0) {
+        reply.code(404);
+        return { error: 'session_not_discovered', session_id: req.params.id };
+      }
+      return indexSessions(ctx.db, {
+        roots: indexRoots(ctx),
+        cursorGlobalDbPath: ctx.cursorGlobalDbPath,
+        only: Array.from(new Set(discovered.map((d) => d.harness))),
+        sessionIds: [req.params.id],
+        rawMode: 'reference',
+      });
+    },
+  );
+}
+
+function indexRoots(ctx: RouteContext): Partial<Record<Harness, string>> {
+  const roots: Partial<Record<Harness, string>> = {};
+  for (const [k, v] of Object.entries(ctx.roots)) {
+    if (typeof v === 'string') roots[k as Harness] = v;
+  }
+  return roots;
+}
+
+function truthy(value: string | undefined): boolean {
+  return value === '1' || value === 'true' || value === 'yes';
+}
+
+function parseOptionalInt(value: string | undefined): number | undefined {
+  if (value == null || value.trim() === '') return undefined;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) throw new Error(`invalid integer: ${value}`);
+  return Math.floor(n);
+}
+
+function parseOptionalBytes(value: string | undefined): number | undefined {
+  if (value == null || value.trim() === '') return undefined;
+  return parseByteSize(value).bytes;
+}
+
+function parseHarnessList(value: string | undefined): Harness[] | undefined {
+  if (!value || value === 'all') return undefined;
+  return value.split(',').map((h) => h.trim()).filter(Boolean) as Harness[];
 }

@@ -2,6 +2,7 @@
 // these functions. Tests can hit the same functions directly.
 
 import type { TracebenchDb } from './db.js';
+import { gunzipSync } from 'node:zlib';
 import type {
   CanonicalEvent,
   EventTokens,
@@ -44,7 +45,10 @@ interface EventRow {
   raw_json: string;
 }
 
-function rowToEvent(r: EventRow): CanonicalEvent {
+function rowToEvent(db: TracebenchDb, r: EventRow): CanonicalEvent {
+  const content = r.content_json == null ? null : resolvePayloadRef(db, JSON.parse(r.content_json));
+  const tool = resolveToolPayloadRefs(db, JSON.parse(r.tool_json) as EventTool);
+  const raw = resolvePayloadRef(db, JSON.parse(r.raw_json));
   return {
     event_id: r.event_id,
     session_id: r.session_id,
@@ -59,11 +63,48 @@ function rowToEvent(r: EventRow): CanonicalEvent {
     cost_usd: r.cost_usd,
     cost_method: r.cost_method as CanonicalEvent['cost_method'],
     duration_ms: r.duration_ms,
-    content: r.content_json == null ? null : JSON.parse(r.content_json),
-    tool: JSON.parse(r.tool_json) as EventTool,
+    content: content as CanonicalEvent['content'],
+    tool,
     metadata: JSON.parse(r.metadata_json),
-    raw: JSON.parse(r.raw_json),
+    raw: raw as CanonicalEvent['raw'],
   };
+}
+
+interface PayloadRef {
+  _tracebench_payload: 'ref';
+  payload_id: string;
+}
+
+function isPayloadRef(value: unknown): value is PayloadRef {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as { _tracebench_payload?: unknown })._tracebench_payload === 'ref' &&
+    typeof (value as { payload_id?: unknown }).payload_id === 'string'
+  );
+}
+
+function resolveToolPayloadRefs(db: TracebenchDb, tool: EventTool): EventTool {
+  return {
+    ...tool,
+    input: resolvePayloadRef(db, tool.input) as EventTool['input'],
+    output: resolvePayloadRef(db, tool.output) as EventTool['output'],
+  };
+}
+
+function resolvePayloadRef(db: TracebenchDb, value: unknown): unknown {
+  if (!isPayloadRef(value)) return value;
+  const row = db.raw
+    .prepare('SELECT codec, body FROM event_payloads WHERE payload_id = ?')
+    .get(value.payload_id) as { codec: string; body: Buffer } | undefined;
+  if (!row) {
+    return { ...value, missing: true };
+  }
+  const body =
+    row.codec === 'gzip'
+      ? gunzipSync(row.body).toString('utf8')
+      : Buffer.from(row.body).toString('utf8');
+  return JSON.parse(body);
 }
 
 interface SessionRow {
@@ -189,7 +230,7 @@ export function getSessionEvents(
   const rows = db.raw
     .prepare('SELECT * FROM events WHERE session_id = ? ORDER BY seq ASC')
     .all(sessionId) as EventRow[];
-  return rows.map(rowToEvent);
+  return rows.map((r) => rowToEvent(db, r));
 }
 
 export function getSessionTurns(db: TracebenchDb, sessionId: string): Turn[] {

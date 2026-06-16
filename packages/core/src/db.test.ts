@@ -5,6 +5,11 @@ import {
   insertEvents,
   deleteSessionEvents,
   upsertContextSnapshot,
+  upsertDiscoveredSession,
+  markDiscoveredSessionIndexed,
+  markDiscoveredSessionError,
+  getDiscoveredSession,
+  listDiscoveredSessions,
   type TracebenchDb,
 } from './db.js';
 import type { CanonicalEvent, Session, ContextSnapshot } from './schema.js';
@@ -83,6 +88,9 @@ describe('migrations', () => {
     expect(names).toContain('sessions');
     expect(names).toContain('events');
     expect(names).toContain('context_snapshots');
+    expect(names).toContain('discovered_sessions');
+    expect(names).toContain('event_payloads');
+    expect(names).toContain('event_payload_refs');
     expect(names).toContain('_migrations');
   });
 
@@ -141,6 +149,122 @@ describe('session + event roundtrip', () => {
     expect(turns.length).toBe(2);
     expect(turns[0]!.events.length).toBe(2);
     expect(turns[1]!.events.length).toBe(1);
+  });
+
+  it('can store raw JSON as a source reference instead of duplicating full raw payloads', () => {
+    upsertSession(db, makeSession());
+    insertEvents(
+      db,
+      [
+        makeEvent({
+          raw: { massive: 'x'.repeat(20_000), keep_me_out_of_hot_rows: true },
+        }),
+      ],
+      0,
+      { rawMode: 'reference' },
+    );
+    const got = getSessionEvents(db, 'sess-1')[0]!;
+    expect(got.raw).toEqual({
+      _tracebench_raw: 'source_ref',
+      raw_path: '/x/y.jsonl',
+      harness: 'claude_code',
+      event_id: got.event_id,
+      timestamp: got.timestamp,
+    });
+    const row = db.raw
+      .prepare('SELECT length(raw_json) AS n FROM events WHERE event_id = ?')
+      .get(got.event_id) as { n: number };
+    expect(row.n).toBeLessThan(300);
+  });
+
+  it('externalizes and deduplicates large payloads while preserving query fidelity', () => {
+    upsertSession(db, makeSession());
+    const output = 'same-output\n'.repeat(1000);
+    insertEvents(
+      db,
+      [
+        makeEvent({
+          event_id: 'large-1',
+          tool: { name: 'Bash', input: { command: 'a' }, output, status: 'success', error_message: null },
+        }),
+        makeEvent({
+          event_id: 'large-2',
+          tool: { name: 'Bash', input: { command: 'b' }, output, status: 'success', error_message: null },
+        }),
+      ],
+      0,
+      { payloadMode: 'external', payloadThresholdBytes: 100 },
+    );
+
+    const events = getSessionEvents(db, 'sess-1');
+    expect(events.map((e) => e.tool.output)).toEqual([output, output]);
+
+    const payloadCount = db.raw
+      .prepare('SELECT COUNT(*) AS n FROM event_payloads')
+      .get() as { n: number };
+    const refCount = db.raw
+      .prepare('SELECT COUNT(*) AS n FROM event_payload_refs')
+      .get() as { n: number };
+    const hotRows = db.raw
+      .prepare('SELECT tool_json FROM events ORDER BY seq ASC')
+      .all() as { tool_json: string }[];
+    expect(payloadCount.n).toBe(1);
+    expect(refCount.n).toBe(2);
+    expect(hotRows[0]!.tool_json.length).toBeLessThan(400);
+  });
+});
+
+describe('discovered session manifest', () => {
+  it('tracks discovered sessions and preserves hot state when the source is unchanged', () => {
+    upsertDiscoveredSession(db, {
+      harness: 'codex',
+      session_id: 'codex-1',
+      raw_path: '/rollout.jsonl',
+      format_version: '1',
+      source_size: 1234,
+      mtime_ms: 1000,
+    });
+    expect(listDiscoveredSessions(db)).toHaveLength(1);
+    expect(getDiscoveredSession(db, 'codex', '/rollout.jsonl')!.index_state).toBe('discovered');
+
+    markDiscoveredSessionIndexed(db, 'codex', '/rollout.jsonl', 'hot');
+    expect(getDiscoveredSession(db, 'codex', '/rollout.jsonl')!.index_state).toBe('hot');
+
+    upsertDiscoveredSession(db, {
+      harness: 'codex',
+      session_id: 'codex-1',
+      raw_path: '/rollout.jsonl',
+      format_version: '1',
+      source_size: 1234,
+      mtime_ms: 1000,
+    });
+    expect(getDiscoveredSession(db, 'codex', '/rollout.jsonl')!.index_state).toBe('hot');
+  });
+
+  it('resets stale or errored manifest rows to discovered when the source changes', () => {
+    upsertDiscoveredSession(db, {
+      harness: 'claude_code',
+      session_id: 'sess-1',
+      raw_path: '/sess-1.jsonl',
+      format_version: '1',
+      source_size: 100,
+      mtime_ms: 1000,
+    });
+    markDiscoveredSessionError(db, 'claude_code', '/sess-1.jsonl', 'bad json');
+    expect(getDiscoveredSession(db, 'claude_code', '/sess-1.jsonl')!.index_state).toBe('error');
+
+    upsertDiscoveredSession(db, {
+      harness: 'claude_code',
+      session_id: 'sess-1',
+      raw_path: '/sess-1.jsonl',
+      format_version: '1',
+      source_size: 200,
+      mtime_ms: 2000,
+    });
+    const got = getDiscoveredSession(db, 'claude_code', '/sess-1.jsonl')!;
+    expect(got.index_state).toBe('discovered');
+    expect(got.error_message).toBeNull();
+    expect(got.source_size).toBe(200);
   });
 });
 

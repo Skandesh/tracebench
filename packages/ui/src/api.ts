@@ -39,6 +39,6 @@ export function getSessionEvents(id: string): Promise<{ events: CanonicalEvent[]
   return getJSON(`/api/sessions/${encodeURIComponent(id)}/events`);
 }
 
-export function reindex(): Promise<{ scanned: number; indexed: number; skipped: number }> {
+export function reindex(): Promise<{ scanned: number; indexed: number; skipped: number; deferred: number }> {
   return fetch('/api/reindex', { method: 'POST' }).then((r) => r.json());
 }

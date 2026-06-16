@@ -1,6 +1,6 @@
 # tracebench
 
-> Local-first viewer for AI coding agent sessions.
+> Local-first DevTools / flight recorder for AI coding agent sessions.
 
 ```bash
 npx tracebench
@@ -9,21 +9,25 @@ npx tracebench
 [![npm](https://img.shields.io/npm/v/tracebench.svg)](https://www.npmjs.com/package/tracebench)
 [![license](https://img.shields.io/npm/l/tracebench.svg)](./LICENSE)
 
-Tracebench reads session logs from supported agent harnesses — **Claude Code, OpenCode, Codex, and Cursor** — and renders them into one unified viewer. The wedge is harness-agnosticism: most people use more than one tool, and existing viewers each tie themselves to one harness.
+Tracebench reads session logs from supported agent harnesses — **Claude Code, OpenCode, Codex, and Cursor** — and renders them into one unified observability view. The wedge is harness-agnosticism: most people use more than one tool, and existing viewers each tie themselves to one harness.
 
 This is local, no cloud, no telemetry. Apache 2.0.
 
 ![tracebench session viewer](./assets/screenshot.png)
+
+## Status
+
+Tracebench is useful today if you want a local, cross-harness way to inspect AI coding agent sessions, tool calls, token use, costs, and context pressure. It is still pre-1.0: the canonical schema and API can change, context analysis is reconstructed from logs rather than the exact model prompt, and features like plugin loading, live tail, export, annotations, and comparative views are not built yet.
 
 ## What's in the box
 
 |  |  |
 |---|---|
 | Adapters live | `claude_code`, `codex`, `cursor`, `opencode` |
-| Adapters planned | Cursor Composer SQLite (`state.vscdb`) for full chat history + tool results |
-| UI | Vite + React 18 — three-pane layout, tool-aware timeline (Bash/Read/Edit/Write/Grep + Codex `exec_command` and `apply_patch` aliases), analytics rail, harness tabs |
-| Backend | Fastify on `127.0.0.1`, SQLite via `better-sqlite3`, multi-adapter indexer |
-| Tests | 80+ across 6 packages |
+| Cursor sources | Agent transcript JSONL plus Composer SQLite (`state.vscdb`) |
+| UI | Vite + React 18 — three-pane layout, tool-aware timeline, spend dashboard, context inspector, analytics rail, harness tabs |
+| Backend | Fastify on `127.0.0.1`, SQLite via `better-sqlite3`, multi-adapter incremental indexer |
+| Tests | 135 Vitest cases across 12 test files |
 
 For per-release changes see **[CHANGELOG.md](./CHANGELOG.md)**.
 
@@ -35,7 +39,7 @@ npx tracebench
 
 That's it. Opens at **http://127.0.0.1:3478**.
 
-On first run it indexes everything under `~/.claude/projects`, `~/.codex/sessions`, `~/.cursor/projects/**/agent-transcripts`, and Cursor Composer history from `state.vscdb`, then keeps an SQLite cache at `~/.tracebench/tracebench.db` so subsequent boots are near-instant.
+On first run it discovers everything under `~/.claude/projects`, `~/.codex/sessions`, `~/.cursor/projects/**/agent-transcripts`, Cursor Composer history from `state.vscdb`, and OpenCode history, then hot-indexes the freshest bounded working set into `~/.tracebench/tracebench.db`. Subsequent boots stay fresh by indexing changed/recent sessions automatically; full historical backfill is explicit with `--index-all` or scoped re-indexing.
 
 ### Flags
 
@@ -48,6 +52,13 @@ On first run it indexes everything under `~/.claude/projects`, `~/.codex/session
 | `--cursor-dir <path>` | `~/.cursor/projects` | Cursor agent-transcripts root |
 | `--cursor-user-data-dir <path>` | OS default | Cursor `User/` dir (Composer `state.vscdb`) |
 | `--db-path <path>` | `~/.tracebench/tracebench.db` | SQLite location |
+| `--index-all` | — | opt into full historical indexing on startup |
+| `--max-startup-sessions <n>` | `200` | cap startup indexing per harness |
+| `--max-startup-bytes <size>` | `1GB` | cap startup source bytes per harness |
+| `--since <duration\|date>` | — | only index sessions newer than a duration/date, e.g. `30d` |
+| `--harness <names>` | all | only index selected harnesses, comma-separated |
+| `--preserve-raw <reference\|full>` | `reference` | keep raw fidelity by source reference unless full raw copying is requested |
+| `doctor --storage` | — | non-mutating storage report with DB/WAL, source bytes, largest sessions, and payload split |
 | `--no-open` | — | skip browser auto-launch |
 | `--no-index` | — | skip the startup re-index pass |
 | `-v` / `--verbose` | — | verbose stderr logging |
@@ -71,12 +82,13 @@ packages/
 ├── core/                       schema, SQLite + migrations, pricing, query API
 ├── adapter-claude-code/        reads ~/.claude/projects/**/*.jsonl, normalizes
 ├── adapter-codex/              reads ~/.codex/sessions + archived_sessions, normalizes
-├── adapter-cursor/             reads ~/.cursor/projects/**/agent-transcripts, normalizes
+├── adapter-cursor/             reads Cursor agent-transcripts + Composer state.vscdb
+├── adapter-opencode/           reads ~/.local/share/opencode/opencode.db
 ├── server/                     Fastify routes + CLI entry + multi-adapter indexer
 └── ui/                         Vite + React 18, ported from the prototype
 ```
 
-The adapter registry lives at `packages/server/src/adapters.ts` — adding a new harness today means writing one adapter package and adding one entry there. Dynamic plugin loading is a v0.4 task.
+The adapter registry lives at `packages/server/src/adapters.ts` — adding a new harness today means writing one adapter package and adding one entry there. Dynamic plugin loading is not implemented yet.
 
 ### Canonical event schema
 
@@ -97,7 +109,9 @@ cost_usd = input * input_per_token
 
 ### Indexer
 
-On startup, the server walks each adapter root (Claude Code, Codex, Cursor) and indexes any session whose mtime is newer than the one in SQLite. Re-index is cheap (~1ms per session in the skip path) so it runs every boot. Trigger a manual re-index with `POST /api/reindex`.
+On startup, the server walks each adapter root (Claude Code, Codex, Cursor, OpenCode), records a lightweight discovery manifest for everything it sees, and hot-indexes changed/recent sessions within the startup budget. This preserves freshness without silently duplicating multi-GB history. Full history remains available through `--index-all`, `POST /api/reindex?indexAll=1`, or `POST /api/sessions/:id/index` for a discovered session.
+
+Large raw payloads are no longer copied into every hot event row by default. Tracebench stores raw source references, and externalizes/deduplicates large content/tool payloads into a compressed payload archive while keeping the timeline API fidelity intact.
 
 ## API
 
@@ -109,7 +123,10 @@ On startup, the server walks each adapter root (Claude Code, Codex, Cursor) and 
 | `GET /api/sessions/:id/turns` | events grouped into turns |
 | `GET /api/sessions/:id/events` | flat event list, seq order |
 | `GET /api/pricing` | the vendored pricing table |
-| `POST /api/reindex` | force a re-index pass |
+| `GET /api/storage` | storage diagnostics: source bytes, DB/WAL footprint, payload split, largest sessions |
+| `GET /api/discovered-sessions?harness=&session_id=` | manifest rows, including discovered-only sessions |
+| `POST /api/reindex` | re-index pass; supports `harness`, `indexAll`, `full`, `maxSessions`, `maxSourceBytes`, `since`, `raw` |
+| `POST /api/sessions/:id/index` | hot-index one discovered session on demand |
 
 ## Repo layout
 
@@ -120,6 +137,7 @@ tracebench/
 │   ├── adapter-claude-code/           @tracebench/adapter-claude-code
 │   ├── adapter-codex/                 @tracebench/adapter-codex
 │   ├── adapter-cursor/                @tracebench/adapter-cursor
+│   ├── adapter-opencode/              @tracebench/adapter-opencode
 │   ├── server/                        tracebench (npm bin)
 │   └── ui/                            @tracebench/ui
 ├── package.json
@@ -144,7 +162,7 @@ pnpm -r test
 pnpm -r build
 
 # UI dev server (proxies /api to localhost:3478, so run the server too)
-pnpm --filter @tracebench/server start
+pnpm --filter tracebench dev
 pnpm --filter @tracebench/ui dev
 ```
 
@@ -154,8 +172,8 @@ Maintainers only. See [RELEASING.md](./RELEASING.md).
 
 1. Add notes under `## [Unreleased]` in [CHANGELOG.md](./CHANGELOG.md).
 2. Run `pnpm release patch --skip-publish` (or `minor` / `major` / an exact version).
-3. The script bumps all five packages, builds, tests, commits, tags `v*`, pushes, and opens a GitHub release.
-4. [`.github/workflows/release.yml`](./.github/workflows/release.yml) publishes all five packages to npm on the tag (no local passkey).
+3. The script bumps all six publishable packages, builds, tests, commits, tags `v*`, pushes, and opens a GitHub release.
+4. [`.github/workflows/release.yml`](./.github/workflows/release.yml) publishes all six publishable packages to npm on the tag (no local passkey).
 
 One-time setup: npm **Trusted Publisher** on `tracebench` and each `@tracebench/*` package → workflow `release.yml`.
 
@@ -165,12 +183,10 @@ See [CHANGELOG.md](./CHANGELOG.md).
 
 ## Roadmap
 
-- **v0.1 (current)** — Claude Code + Codex adapters, multi-adapter indexer, cross-harness UI
-- **v0.2** — Adapter authoring guide, Windows support, per-adapter fixture CI
-- **v0.3** — OpenCode + Cursor adapters (all four harnesses live)
-- **v0.4** — Context window analyzer, cost/time dashboards, behavior analytics
-- **v0.5+** — Plugin loader, plugin registry, comparative views, live tail, HTML export, annotations, sub-agent viz
-- **v1.0** — Schema stable, semver guarantees, all 4 supported adapters, 2nd maintainer
+- **v0.3.x (current)** — four live adapters, spend dashboard, context inspector, context pressure indicators
+- **v0.4** — Adapter authoring guide, Windows support, per-adapter fixture CI, plugin loader
+- **v0.5+** — Plugin registry, comparative views, live tail, HTML export, annotations, sub-agent visualization
+- **v1.0** — Stable schema/API, semver guarantees, all four adapters hardened against upstream log changes, second maintainer
 
 ## License
 

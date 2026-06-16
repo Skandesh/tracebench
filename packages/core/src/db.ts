@@ -8,11 +8,16 @@
 //   a migration.
 
 import Database, { type Database as DB } from 'better-sqlite3';
+import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { gzipSync } from 'node:zlib';
 import type {
   CanonicalEvent,
   ContextSnapshot,
+  DiscoveredSession,
+  DiscoveredSessionIndexState,
+  Harness,
   Session,
 } from './schema.js';
 
@@ -114,6 +119,60 @@ const MIGRATIONS: { version: number; name: string; sql: string }[] = [
       ALTER TABLE sessions ADD COLUMN tool_call_count          INTEGER;
       ALTER TABLE sessions ADD COLUMN tool_error_count         INTEGER;
       ALTER TABLE sessions ADD COLUMN message_count            INTEGER;
+    `,
+  },
+  {
+    version: 3,
+    name: 'discovered_sessions_manifest',
+    sql: `
+      CREATE TABLE discovered_sessions (
+        harness        TEXT NOT NULL,
+        session_id     TEXT NOT NULL,
+        raw_path       TEXT NOT NULL,
+        format_version TEXT NOT NULL,
+        source_size    INTEGER NOT NULL,
+        mtime_ms       INTEGER NOT NULL,
+        index_state    TEXT NOT NULL DEFAULT 'discovered',
+        indexed_at     TEXT,
+        error_message  TEXT,
+        PRIMARY KEY (harness, raw_path)
+      );
+
+      CREATE INDEX discovered_sessions_by_harness
+        ON discovered_sessions(harness);
+      CREATE INDEX discovered_sessions_by_state
+        ON discovered_sessions(index_state);
+      CREATE INDEX discovered_sessions_by_mtime
+        ON discovered_sessions(mtime_ms DESC);
+      CREATE INDEX discovered_sessions_by_session
+        ON discovered_sessions(harness, session_id);
+    `,
+  },
+  {
+    version: 4,
+    name: 'external_event_payloads',
+    sql: `
+      CREATE TABLE event_payloads (
+        payload_id  TEXT PRIMARY KEY,
+        kind        TEXT NOT NULL,
+        codec       TEXT NOT NULL,
+        byte_length INTEGER NOT NULL,
+        hash        TEXT NOT NULL,
+        body        BLOB NOT NULL
+      );
+
+      CREATE INDEX event_payloads_by_hash
+        ON event_payloads(hash, byte_length);
+
+      CREATE TABLE event_payload_refs (
+        event_id   TEXT NOT NULL REFERENCES events(event_id) ON DELETE CASCADE,
+        field      TEXT NOT NULL,
+        payload_id TEXT NOT NULL REFERENCES event_payloads(payload_id),
+        PRIMARY KEY (event_id, field)
+      );
+
+      CREATE INDEX event_payload_refs_by_payload
+        ON event_payload_refs(payload_id);
     `,
   },
 ];
@@ -250,6 +309,126 @@ export function deleteSessionEvents(db: TracebenchDb, sessionId: string): void {
   db.raw
     .prepare('DELETE FROM context_snapshots WHERE session_id = ?')
     .run(sessionId);
+  db.raw
+    .prepare(
+      `DELETE FROM event_payloads
+       WHERE NOT EXISTS (
+         SELECT 1 FROM event_payload_refs
+         WHERE event_payload_refs.payload_id = event_payloads.payload_id
+       )`,
+    )
+    .run();
+}
+
+// ── Discovered session manifest ─────────────────────────────────────────────
+
+export interface UpsertDiscoveredSessionInput {
+  harness: Harness;
+  session_id: string;
+  raw_path: string;
+  format_version: string;
+  source_size: number;
+  mtime_ms: number;
+}
+
+const UPSERT_DISCOVERED_SQL = `
+  INSERT INTO discovered_sessions (
+    harness, session_id, raw_path, format_version, source_size, mtime_ms,
+    index_state, indexed_at, error_message
+  ) VALUES (
+    @harness, @session_id, @raw_path, @format_version, @source_size, @mtime_ms,
+    'discovered', NULL, NULL
+  )
+  ON CONFLICT(harness, raw_path) DO UPDATE SET
+    session_id     = excluded.session_id,
+    format_version = excluded.format_version,
+    source_size    = excluded.source_size,
+    mtime_ms       = excluded.mtime_ms,
+    index_state    = CASE
+      WHEN discovered_sessions.mtime_ms = excluded.mtime_ms
+       AND discovered_sessions.index_state IN ('hot', 'warm', 'raw_archived')
+      THEN discovered_sessions.index_state
+      ELSE 'discovered'
+    END,
+    indexed_at = CASE
+      WHEN discovered_sessions.mtime_ms = excluded.mtime_ms
+       AND discovered_sessions.index_state IN ('hot', 'warm', 'raw_archived')
+      THEN discovered_sessions.indexed_at
+      ELSE NULL
+    END,
+    error_message = NULL
+`;
+
+export function upsertDiscoveredSession(
+  db: TracebenchDb,
+  input: UpsertDiscoveredSessionInput,
+): void {
+  db.raw.prepare(UPSERT_DISCOVERED_SQL).run(input);
+}
+
+export function markDiscoveredSessionIndexed(
+  db: TracebenchDb,
+  harness: Harness,
+  rawPath: string,
+  state: DiscoveredSessionIndexState = 'hot',
+): void {
+  db.raw
+    .prepare(
+      `UPDATE discovered_sessions
+       SET index_state = ?, indexed_at = datetime('now'), error_message = NULL
+       WHERE harness = ? AND raw_path = ?`,
+    )
+    .run(state, harness, rawPath);
+}
+
+export function markDiscoveredSessionError(
+  db: TracebenchDb,
+  harness: Harness,
+  rawPath: string,
+  message: string,
+): void {
+  db.raw
+    .prepare(
+      `UPDATE discovered_sessions
+       SET index_state = 'error', error_message = ?
+       WHERE harness = ? AND raw_path = ?`,
+    )
+    .run(message, harness, rawPath);
+}
+
+export function getDiscoveredSession(
+  db: TracebenchDb,
+  harness: Harness,
+  rawPath: string,
+): DiscoveredSession | null {
+  const row = db.raw
+    .prepare('SELECT * FROM discovered_sessions WHERE harness = ? AND raw_path = ?')
+    .get(harness, rawPath) as DiscoveredSession | undefined;
+  return row ?? null;
+}
+
+export function listDiscoveredSessions(
+  db: TracebenchDb,
+  opts: { harness?: Harness; session_id?: string } = {},
+): DiscoveredSession[] {
+  const where: string[] = [];
+  const params: Record<string, unknown> = {};
+  if (opts.harness) {
+    where.push('harness = @harness');
+    params.harness = opts.harness;
+  }
+  if (opts.session_id) {
+    where.push('session_id = @session_id');
+    params.session_id = opts.session_id;
+  }
+  const rows = db.raw
+    .prepare(
+      `SELECT * FROM discovered_sessions
+       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+       ORDER BY mtime_ms DESC`,
+    )
+    .all(params) as DiscoveredSession[];
+  return rows;
 }
 
 // ── Event writes ────────────────────────────────────────────────────────────
@@ -275,13 +454,35 @@ export function insertEvents(
   db: TracebenchDb,
   events: CanonicalEvent[],
   startSeq = 0,
+  options: {
+    rawMode?: 'full' | 'reference';
+    payloadMode?: 'inline' | 'external';
+    payloadThresholdBytes?: number;
+  } = {},
 ): number {
   if (events.length === 0) return startSeq;
   const stmt = db.raw.prepare(INSERT_EVENT_SQL);
+  const payloadMode = options.payloadMode ?? 'inline';
+  const payloadThresholdBytes = options.payloadThresholdBytes ?? 64 * 1024;
   const tx = db.raw.transaction((batch: CanonicalEvent[], seq0: number) => {
     let seq = seq0;
     for (const e of batch) {
-      stmt.run({
+      const content = maybeExternalizePayload(db, 'content', e.content, {
+        payloadMode,
+        payloadThresholdBytes,
+      });
+      const tool = maybeExternalizeTool(db, e, {
+        payloadMode,
+        payloadThresholdBytes,
+      });
+      const raw =
+        options.rawMode === 'reference'
+          ? rawReferenceForEvent(e)
+          : maybeExternalizePayload(db, 'raw', e.raw, {
+              payloadMode,
+              payloadThresholdBytes,
+            });
+      const info = stmt.run({
         event_id: e.event_id,
         session_id: e.session_id,
         turn_id: e.turn_id,
@@ -303,15 +504,126 @@ export function insertEvents(
         tool_status: e.tool.status,
         source_json: JSON.stringify(e.source),
         tokens_json: JSON.stringify(e.tokens),
-        tool_json: JSON.stringify(e.tool),
-        content_json: e.content == null ? null : JSON.stringify(e.content),
+        tool_json: JSON.stringify(tool),
+        content_json: content == null ? null : JSON.stringify(content),
         metadata_json: JSON.stringify(e.metadata),
-        raw_json: JSON.stringify(e.raw),
+        raw_json: JSON.stringify(raw),
       });
+      if (info.changes > 0) {
+        insertPayloadRefsForEvent(db, e.event_id, content, tool, raw);
+      }
     }
     return seq;
   });
   return tx(events, startSeq);
+}
+
+export interface EventPayloadReference {
+  _tracebench_payload: 'ref';
+  payload_id: string;
+  kind: string;
+  byte_length: number;
+  codec: 'gzip';
+}
+
+interface PayloadExternalizeOptions {
+  payloadMode: 'inline' | 'external';
+  payloadThresholdBytes: number;
+}
+
+function maybeExternalizeTool(
+  db: TracebenchDb,
+  e: CanonicalEvent,
+  opts: PayloadExternalizeOptions,
+): CanonicalEvent['tool'] {
+  const input = maybeExternalizePayload(db, 'tool_input', e.tool.input, opts);
+  const output = maybeExternalizePayload(db, 'tool_output', e.tool.output, opts);
+  if (input === e.tool.input && output === e.tool.output) return e.tool;
+  return { ...e.tool, input, output } as CanonicalEvent['tool'];
+}
+
+function maybeExternalizePayload<T>(
+  db: TracebenchDb,
+  field: string,
+  value: T,
+  opts: PayloadExternalizeOptions,
+): T | EventPayloadReference {
+  if (opts.payloadMode !== 'external' || value == null) return value;
+  const text = JSON.stringify(value);
+  const byteLength = Buffer.byteLength(text, 'utf8');
+  if (byteLength <= opts.payloadThresholdBytes) return value;
+
+  const hash = createHash('sha256').update(text).digest('hex');
+  const payloadId = createHash('sha256')
+    .update(field)
+    .update('\0')
+    .update(hash)
+    .digest('hex');
+  const body = gzipSync(Buffer.from(text, 'utf8'));
+
+  db.raw
+    .prepare(
+      `INSERT OR IGNORE INTO event_payloads
+         (payload_id, kind, codec, byte_length, hash, body)
+       VALUES (?, ?, 'gzip', ?, ?, ?)`,
+    )
+    .run(payloadId, field, byteLength, hash, body);
+
+  return {
+    _tracebench_payload: 'ref',
+    payload_id: payloadId,
+    kind: field,
+    byte_length: byteLength,
+    codec: 'gzip',
+  };
+}
+
+function insertPayloadRefsForEvent(
+  db: TracebenchDb,
+  eventId: string,
+  content: unknown,
+  tool: CanonicalEvent['tool'],
+  raw: unknown,
+): void {
+  insertPayloadRef(db, eventId, 'content', content);
+  insertPayloadRef(db, eventId, 'tool_input', tool.input);
+  insertPayloadRef(db, eventId, 'tool_output', tool.output);
+  insertPayloadRef(db, eventId, 'raw', raw);
+}
+
+function insertPayloadRef(
+  db: TracebenchDb,
+  eventId: string,
+  field: string,
+  value: unknown,
+): void {
+  if (!isEventPayloadReference(value)) return;
+  db.raw
+    .prepare(
+      `INSERT OR REPLACE INTO event_payload_refs
+         (event_id, field, payload_id)
+       VALUES (?, ?, ?)`,
+    )
+    .run(eventId, field, value.payload_id);
+}
+
+function isEventPayloadReference(value: unknown): value is EventPayloadReference {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as { _tracebench_payload?: unknown })._tracebench_payload === 'ref' &&
+    typeof (value as { payload_id?: unknown }).payload_id === 'string'
+  );
+}
+
+function rawReferenceForEvent(e: CanonicalEvent): Record<string, unknown> {
+  return {
+    _tracebench_raw: 'source_ref',
+    raw_path: e.source.raw_path,
+    harness: e.source.harness,
+    event_id: e.event_id,
+    timestamp: e.timestamp,
+  };
 }
 
 // ── Context snapshot writes ─────────────────────────────────────────────────

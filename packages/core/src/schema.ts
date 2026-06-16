@@ -6,6 +6,13 @@ export const CANONICAL_SCHEMA_VERSION = '0.1.0';
 
 export type Harness = 'claude_code' | 'opencode' | 'codex' | 'cursor';
 
+export type DiscoveredSessionIndexState =
+  | 'discovered'
+  | 'hot'
+  | 'warm'
+  | 'raw_archived'
+  | 'error';
+
 export type Role = 'user' | 'assistant' | 'system' | 'tool';
 
 export type EventType =
@@ -105,6 +112,20 @@ export interface Session {
   raw_path: string; // absolute path to source file/dir
   format_version: string;
   mtime_ms: number; // for incremental re-index
+}
+
+// Lightweight manifest entry: lets Tracebench know what exists on disk
+// without fully materializing every session into the hot event index.
+export interface DiscoveredSession {
+  harness: Harness;
+  session_id: string;
+  raw_path: string;
+  format_version: string;
+  source_size: number;
+  mtime_ms: number;
+  index_state: DiscoveredSessionIndexState;
+  indexed_at: string | null;
+  error_message: string | null;
 }
 
 // Derived/aggregated fields — not stored, computed at query time.

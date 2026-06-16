@@ -3,6 +3,8 @@
 
 import type { TracebenchDb } from './db.js';
 import { gunzipSync } from 'node:zlib';
+import { createReadStream } from 'node:fs';
+import { createInterface } from 'node:readline';
 import type {
   CanonicalEvent,
   EventTokens,
@@ -231,6 +233,133 @@ export function getSessionEvents(
     .prepare('SELECT * FROM events WHERE session_id = ? ORDER BY seq ASC')
     .all(sessionId) as EventRow[];
   return rows.map((r) => rowToEvent(db, r));
+}
+
+export interface EventRawResult {
+  event: CanonicalEvent;
+  raw: unknown;
+  provenance:
+    | {
+        kind: 'stored';
+        available: true;
+      }
+    | {
+        kind: 'source_ref';
+        available: true;
+        raw_path: string;
+        line: number;
+      }
+    | {
+        kind: 'source_ref';
+        available: false;
+        raw_path?: string;
+        line?: number;
+        reason: string;
+      };
+}
+
+interface RawSourceRef {
+  _tracebench_raw: 'source_ref';
+  raw_path?: unknown;
+  line?: unknown;
+}
+
+function isRawSourceRef(value: unknown): value is RawSourceRef {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as { _tracebench_raw?: unknown })._tracebench_raw === 'source_ref'
+  );
+}
+
+export async function getEventRaw(
+  db: TracebenchDb,
+  sessionId: string,
+  eventId: string,
+): Promise<EventRawResult | null> {
+  const row = db.raw
+    .prepare('SELECT * FROM events WHERE session_id = ? AND event_id = ?')
+    .get(sessionId, eventId) as EventRow | undefined;
+  if (!row) return null;
+  const event = rowToEvent(db, row);
+  if (!isRawSourceRef(event.raw)) {
+    return {
+      event,
+      raw: event.raw,
+      provenance: { kind: 'stored', available: true },
+    };
+  }
+
+  const rawPath = typeof event.raw.raw_path === 'string' ? event.raw.raw_path : undefined;
+  const line =
+    typeof event.raw.line === 'number' && Number.isFinite(event.raw.line)
+      ? Math.floor(event.raw.line)
+      : undefined;
+  if (!rawPath || !line || line < 1) {
+    return {
+      event,
+      raw: event.raw,
+      provenance: {
+        kind: 'source_ref',
+        available: false,
+        raw_path: rawPath,
+        line,
+        reason: 'source locator is not available for this event',
+      },
+    };
+  }
+
+  const sourceLine = await readJsonlLine(rawPath, line);
+  if (sourceLine == null) {
+    return {
+      event,
+      raw: event.raw,
+      provenance: {
+        kind: 'source_ref',
+        available: false,
+        raw_path: rawPath,
+        line,
+        reason: 'source file or line is no longer available',
+      },
+    };
+  }
+
+  let parsed: unknown = sourceLine;
+  try {
+    parsed = JSON.parse(sourceLine);
+  } catch {
+    // Keep the exact line text if it is not valid JSON.
+  }
+  return {
+    event,
+    raw: parsed,
+    provenance: {
+      kind: 'source_ref',
+      available: true,
+      raw_path: rawPath,
+      line,
+    },
+  };
+}
+
+async function readJsonlLine(path: string, targetLine: number): Promise<string | null> {
+  return new Promise((resolve) => {
+    const stream = createReadStream(path, { encoding: 'utf8' });
+    stream.on('error', () => resolve(null));
+    const rl = createInterface({ input: stream, crlfDelay: Infinity });
+    let lineNo = 0;
+    rl.on('line', (line) => {
+      lineNo++;
+      if (lineNo === targetLine) {
+        rl.close();
+        stream.destroy();
+        resolve(line);
+      }
+    });
+    rl.on('close', () => {
+      if (lineNo < targetLine) resolve(null);
+    });
+  });
 }
 
 export function getSessionTurns(db: TracebenchDb, sessionId: string): Turn[] {

@@ -27,7 +27,7 @@ Tracebench is useful today if you want a local, cross-harness way to inspect AI 
 | Cursor sources | Agent transcript JSONL plus Composer SQLite (`state.vscdb`) |
 | UI | Vite + React 18 — three-pane layout, tool-aware timeline, spend dashboard, context inspector, analytics rail, harness tabs |
 | Backend | Fastify on `127.0.0.1`, SQLite via `better-sqlite3`, multi-adapter incremental indexer |
-| Tests | 135 Vitest cases across 12 test files |
+| Tests | 143 Vitest cases across 12 test files |
 
 For per-release changes see **[CHANGELOG.md](./CHANGELOG.md)**.
 
@@ -39,7 +39,7 @@ npx tracebench
 
 That's it. Opens at **http://127.0.0.1:3478**.
 
-On first run it discovers everything under `~/.claude/projects`, `~/.codex/sessions`, `~/.cursor/projects/**/agent-transcripts`, Cursor Composer history from `state.vscdb`, and OpenCode history, then hot-indexes the freshest bounded working set into `~/.tracebench/tracebench.db`. Subsequent boots stay fresh by indexing changed/recent sessions automatically; full historical backfill is explicit with `--index-all` or scoped re-indexing.
+On first run it discovers everything under `~/.claude/projects`, `~/.codex/sessions`, `~/.cursor/projects/**/agent-transcripts`, Cursor Composer history from `state.vscdb`, and OpenCode history, then hot-indexes the freshest bounded working set into `~/.tracebench/tracebench.db`. Subsequent boots stay fresh by indexing changed/recent sessions automatically; full historical backfill is explicit with `--index-all` or scoped re-indexing. The UI also shows discovered-only sessions so bounded startup indexing does not look like missing data.
 
 ### Flags
 
@@ -111,7 +111,9 @@ cost_usd = input * input_per_token
 
 On startup, the server walks each adapter root (Claude Code, Codex, Cursor, OpenCode), records a lightweight discovery manifest for everything it sees, and hot-indexes changed/recent sessions within the startup budget. This preserves freshness without silently duplicating multi-GB history. Full history remains available through `--index-all`, `POST /api/reindex?indexAll=1`, or `POST /api/sessions/:id/index` for a discovered session.
 
-Large raw payloads are no longer copied into every hot event row by default. Tracebench stores raw source references, and externalizes/deduplicates large content/tool payloads into a compressed payload archive while keeping the timeline API fidelity intact.
+Claude Code, Codex, and Cursor JSONL adapters expose a streaming index contract that yields session metadata plus bounded event batches. The indexer stages those batches first, then atomically publishes the complete session into the visible tables. If a large backfill fails halfway through, the previous indexed version stays visible and the manifest records the error.
+
+Large raw payloads are no longer copied into every hot event row by default. Tracebench stores raw source references with JSONL line locators when available, and externalizes/deduplicates large content/tool payloads into a compressed payload archive while keeping the timeline API fidelity intact. `GET /api/sessions/:id/events/:eventId/raw` can retrieve the original raw record from the source file when that file is still present.
 
 ## API
 
@@ -122,8 +124,9 @@ Large raw payloads are no longer copied into every hot event row by default. Tra
 | `GET /api/sessions/:id` | session + tool counts |
 | `GET /api/sessions/:id/turns` | events grouped into turns |
 | `GET /api/sessions/:id/events` | flat event list, seq order |
+| `GET /api/sessions/:id/events/:eventId/raw` | raw/provenance lookup for a canonical event |
 | `GET /api/pricing` | the vendored pricing table |
-| `GET /api/storage` | storage diagnostics: source bytes, DB/WAL footprint, payload split, largest sessions |
+| `GET /api/storage` | storage diagnostics: source bytes, DB/WAL footprint, payload split, largest sessions, index-run state |
 | `GET /api/discovered-sessions?harness=&session_id=` | manifest rows, including discovered-only sessions |
 | `POST /api/reindex` | re-index pass; supports `harness`, `indexAll`, `full`, `maxSessions`, `maxSourceBytes`, `since`, `raw` |
 | `POST /api/sessions/:id/index` | hot-index one discovered session on demand |

@@ -8,6 +8,7 @@ import {
   listSessions,
   getSession,
   getSessionEvents,
+  getEventRaw,
   getSessionTurns,
   getToolCounts,
   listDiscoveredSessions,
@@ -75,6 +76,31 @@ export async function registerRoutes(
         return { error: 'session_not_found', session_id: req.params.id };
       }
       return { events: getSessionEvents(ctx.db, req.params.id) };
+    },
+  );
+
+  app.get<{ Params: { id: string; eventId: string } }>(
+    '/api/sessions/:id/events/:eventId/raw',
+    async (req, reply) => {
+      const session = getSession(ctx.db, req.params.id);
+      if (!session) {
+        reply.code(404);
+        return { error: 'session_not_found', session_id: req.params.id };
+      }
+      const result = await getEventRaw(
+        ctx.db,
+        req.params.id,
+        req.params.eventId,
+      );
+      if (!result) {
+        reply.code(404);
+        return {
+          error: 'event_not_found',
+          session_id: req.params.id,
+          event_id: req.params.eventId,
+        };
+      }
+      return result;
     },
   );
 

@@ -8,8 +8,14 @@ import {
   upsertDiscoveredSession,
   markDiscoveredSessionIndexed,
   markDiscoveredSessionError,
+  markDiscoveredSessionIndexing,
   getDiscoveredSession,
   listDiscoveredSessions,
+  beginIndexRun,
+  failIndexRun,
+  publishIndexRun,
+  stageEvents,
+  stageSession,
   type TracebenchDb,
 } from './db.js';
 import type { CanonicalEvent, Session, ContextSnapshot } from './schema.js';
@@ -20,7 +26,11 @@ import {
   getSessionTurns,
   computeSessionAggregates,
   getToolCounts,
+  getEventRaw,
 } from './query.js';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -91,6 +101,9 @@ describe('migrations', () => {
     expect(names).toContain('discovered_sessions');
     expect(names).toContain('event_payloads');
     expect(names).toContain('event_payload_refs');
+    expect(names).toContain('index_runs');
+    expect(names).toContain('staged_sessions');
+    expect(names).toContain('staged_events');
     expect(names).toContain('_migrations');
   });
 
@@ -175,6 +188,39 @@ describe('session + event roundtrip', () => {
       .prepare('SELECT length(raw_json) AS n FROM events WHERE event_id = ?')
       .get(got.event_id) as { n: number };
     expect(row.n).toBeLessThan(300);
+  });
+
+  it('stores actionable source locators in raw source references', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tracebench-raw-ref-'));
+    const rawPath = join(dir, 'source.jsonl');
+    writeFileSync(rawPath, '{"type":"first"}\n{"type":"second"}\n');
+    upsertSession(db, makeSession({ raw_path: rawPath }));
+    insertEvents(
+      db,
+      [
+        makeEvent({
+          event_id: 'evt-with-line',
+          source: {
+            harness: 'claude_code',
+            format_version: '1',
+            raw_path: rawPath,
+            line: 2,
+          },
+          raw: { type: 'second' },
+        }),
+      ],
+      0,
+      { rawMode: 'reference' },
+    );
+
+    const got = await getEventRaw(db, 'sess-1', 'evt-with-line');
+    expect(got?.provenance).toMatchObject({
+      kind: 'source_ref',
+      available: true,
+      raw_path: rawPath,
+      line: 2,
+    });
+    expect(got?.raw).toEqual({ type: 'second' });
   });
 
   it('externalizes and deduplicates large payloads while preserving query fidelity', () => {
@@ -265,6 +311,79 @@ describe('discovered session manifest', () => {
     expect(got.index_state).toBe('discovered');
     expect(got.error_message).toBeNull();
     expect(got.source_size).toBe(200);
+  });
+
+  it('marks sessions as actively indexing without dropping the manifest row', () => {
+    upsertDiscoveredSession(db, {
+      harness: 'codex',
+      session_id: 'codex-indexing',
+      raw_path: '/indexing.jsonl',
+      format_version: '1',
+      source_size: 100,
+      mtime_ms: 1000,
+    });
+    markDiscoveredSessionIndexing(db, 'codex', '/indexing.jsonl');
+    expect(getDiscoveredSession(db, 'codex', '/indexing.jsonl')!.index_state).toBe('indexing');
+  });
+});
+
+describe('staged index publishing', () => {
+  it('does not expose staged rows until publish', () => {
+    upsertDiscoveredSession(db, {
+      harness: 'claude_code',
+      session_id: 'sess-1',
+      raw_path: '/x/y.jsonl',
+      format_version: '1',
+      source_size: 10,
+      mtime_ms: 1000,
+    });
+    const runId = beginIndexRun(db, {
+      harness: 'claude_code',
+      session_id: 'sess-1',
+      raw_path: '/x/y.jsonl',
+    });
+    const events = [makeEvent({ event_id: 'stage-1' }), makeEvent({ event_id: 'stage-2' })];
+    stageEvents(db, runId, events, 0, { rawMode: 'reference' });
+    stageSession(db, runId, makeSession(), {
+      total_cost_usd: 0,
+      total_input_tokens: 0,
+      total_output_tokens: 0,
+      total_cache_read_tokens: 0,
+      total_cache_create_tokens: 0,
+      total_reasoning_tokens: 0,
+      duration_ms: 0,
+      turn_count: 1,
+      tool_call_count: 0,
+      tool_error_count: 0,
+      message_count: 2,
+    });
+
+    expect(getSession(db, 'sess-1')).toBeNull();
+    expect(getSessionEvents(db, 'sess-1')).toEqual([]);
+
+    publishIndexRun(db, runId, {
+      harness: 'claude_code',
+      rawPath: '/x/y.jsonl',
+      state: 'hot',
+    });
+    expect(getSession(db, 'sess-1')!.title).toBe('Fix bug X');
+    expect(getSessionEvents(db, 'sess-1')).toHaveLength(2);
+    expect(getDiscoveredSession(db, 'claude_code', '/x/y.jsonl')!.index_state).toBe('hot');
+  });
+
+  it('keeps an existing visible session when a staged run fails', () => {
+    upsertSession(db, makeSession({ title: 'old visible' }));
+    insertEvents(db, [makeEvent({ event_id: 'old-event', content: 'old' })]);
+    const runId = beginIndexRun(db, {
+      harness: 'claude_code',
+      session_id: 'sess-1',
+      raw_path: '/x/y.jsonl',
+    });
+    stageEvents(db, runId, [makeEvent({ event_id: 'new-event', content: 'new' })]);
+    failIndexRun(db, runId, 'boom');
+
+    expect(getSession(db, 'sess-1')!.title).toBe('old visible');
+    expect(getSessionEvents(db, 'sess-1').map((e) => e.event_id)).toEqual(['old-event']);
   });
 });
 

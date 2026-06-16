@@ -108,6 +108,12 @@ export interface StorageReport {
     external_payload_count: number;
     total_json: number;
   };
+  index_runs: {
+    total: number;
+    indexing: number;
+    published: number;
+    error: number;
+  };
 }
 
 export function buildStorageReport(opts: StorageReportOptions): StorageReport {
@@ -119,6 +125,7 @@ export function buildStorageReport(opts: StorageReportOptions): StorageReport {
   );
   const indexedByHarness = readIndexedCounts(opts.db);
   const payload = readPayloadBytes(opts.db);
+  const indexRuns = readIndexRunCounts(opts.db);
 
   const perHarness: StorageReport['discovery']['per_harness'] = {};
   const largest: StorageReport['largest_sources'] = [];
@@ -175,6 +182,7 @@ export function buildStorageReport(opts: StorageReportOptions): StorageReport {
     },
     largest_sources: largest.slice(0, topN),
     payload_bytes: payload,
+    index_runs: indexRuns,
   };
 }
 
@@ -265,6 +273,20 @@ function readPayloadBytes(db?: TracebenchDb): StorageReport['payload_bytes'] {
   return { ...row, ...external, total_json: total };
 }
 
+function readIndexRunCounts(db?: TracebenchDb): StorageReport['index_runs'] {
+  const empty = { total: 0, indexing: 0, published: 0, error: 0 };
+  if (!db || !tableExists(db, 'index_runs')) return empty;
+  const rows = db.raw
+    .prepare('SELECT state, COUNT(*) AS count FROM index_runs GROUP BY state')
+    .all() as { state: 'indexing' | 'published' | 'error'; count: number }[];
+  const out = { ...empty };
+  for (const row of rows) {
+    out.total += row.count;
+    if (row.state in out) out[row.state] = row.count;
+  }
+  return out;
+}
+
 function readExternalPayloadBytes(
   db: TracebenchDb,
 ): Pick<
@@ -327,6 +349,11 @@ export function renderStorageReport(report: StorageReport): string {
   lines.push(`Discovered source bytes: ${formatBytes(report.discovery.total_source_bytes)}`);
   lines.push(`Indexed sessions: ${report.discovery.indexed_sessions}`);
   lines.push(`Manifest sessions: ${report.discovery.manifest_sessions}`);
+  if (report.index_runs.indexing > 0 || report.index_runs.error > 0) {
+    lines.push(
+      `Index runs: ${report.index_runs.indexing} active, ${report.index_runs.error} failed`,
+    );
+  }
   lines.push('');
   lines.push('By harness:');
   for (const [h, s] of Object.entries(report.discovery.per_harness)) {

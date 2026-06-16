@@ -8,7 +8,7 @@
 //   a migration.
 
 import Database, { type Database as DB } from 'better-sqlite3';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { gzipSync } from 'node:zlib';
@@ -173,6 +173,75 @@ const MIGRATIONS: { version: number; name: string; sql: string }[] = [
 
       CREATE INDEX event_payload_refs_by_payload
         ON event_payload_refs(payload_id);
+    `,
+  },
+  {
+    version: 5,
+    name: 'staged_index_runs',
+    sql: `
+      CREATE TABLE index_runs (
+        index_run_id TEXT PRIMARY KEY,
+        harness      TEXT NOT NULL,
+        session_id   TEXT NOT NULL,
+        raw_path     TEXT NOT NULL,
+        state        TEXT NOT NULL DEFAULT 'indexing',
+        started_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        finished_at  TEXT,
+        error_message TEXT
+      );
+
+      CREATE INDEX index_runs_by_state
+        ON index_runs(state);
+      CREATE INDEX index_runs_by_source
+        ON index_runs(harness, raw_path);
+
+      CREATE TABLE staged_sessions (
+        index_run_id   TEXT PRIMARY KEY REFERENCES index_runs(index_run_id) ON DELETE CASCADE,
+        session_id     TEXT NOT NULL,
+        session_json   TEXT NOT NULL,
+        aggregate_json TEXT NOT NULL
+      );
+
+      CREATE TABLE staged_events (
+        index_run_id     TEXT NOT NULL REFERENCES index_runs(index_run_id) ON DELETE CASCADE,
+        event_id         TEXT NOT NULL,
+        session_id       TEXT NOT NULL,
+        turn_id          TEXT NOT NULL,
+        parent_event_id  TEXT,
+        timestamp        TEXT NOT NULL,
+        seq              INTEGER NOT NULL,
+        role             TEXT NOT NULL,
+        event_type       TEXT NOT NULL,
+        model            TEXT,
+        cost_usd         REAL,
+        cost_method      TEXT,
+        duration_ms      INTEGER,
+        tok_input        INTEGER,
+        tok_output       INTEGER,
+        tok_cache_read   INTEGER,
+        tok_cache_create INTEGER,
+        tok_reasoning    INTEGER,
+        tool_name        TEXT,
+        tool_status      TEXT,
+        source_json      TEXT NOT NULL,
+        tokens_json      TEXT NOT NULL,
+        tool_json        TEXT NOT NULL,
+        content_json     TEXT,
+        metadata_json    TEXT NOT NULL,
+        raw_json         TEXT NOT NULL,
+        PRIMARY KEY (index_run_id, event_id)
+      );
+
+      CREATE INDEX staged_events_by_run_seq
+        ON staged_events(index_run_id, seq);
+
+      CREATE TABLE staged_event_payload_refs (
+        index_run_id TEXT NOT NULL REFERENCES index_runs(index_run_id) ON DELETE CASCADE,
+        event_id     TEXT NOT NULL,
+        field        TEXT NOT NULL,
+        payload_id   TEXT NOT NULL REFERENCES event_payloads(payload_id),
+        PRIMARY KEY (index_run_id, event_id, field)
+      );
     `,
   },
 ];
@@ -381,6 +450,20 @@ export function markDiscoveredSessionIndexed(
     .run(state, harness, rawPath);
 }
 
+export function markDiscoveredSessionIndexing(
+  db: TracebenchDb,
+  harness: Harness,
+  rawPath: string,
+): void {
+  db.raw
+    .prepare(
+      `UPDATE discovered_sessions
+       SET index_state = 'indexing', error_message = NULL
+       WHERE harness = ? AND raw_path = ?`,
+    )
+    .run(harness, rawPath);
+}
+
 export function markDiscoveredSessionError(
   db: TracebenchDb,
   harness: Harness,
@@ -431,6 +514,73 @@ export function listDiscoveredSessions(
   return rows;
 }
 
+// ── Staged index runs ───────────────────────────────────────────────────────
+
+export function beginIndexRun(
+  db: TracebenchDb,
+  input: { harness: Harness; session_id: string; raw_path: string },
+): string {
+  const id = randomUUID();
+  db.raw
+    .prepare(
+      `INSERT INTO index_runs (index_run_id, harness, session_id, raw_path)
+       VALUES (?, ?, ?, ?)`,
+    )
+    .run(id, input.harness, input.session_id, input.raw_path);
+  return id;
+}
+
+export function failIndexRun(
+  db: TracebenchDb,
+  indexRunId: string,
+  message: string,
+): void {
+  db.raw.transaction(() => {
+    db.raw
+      .prepare(
+        `UPDATE index_runs
+         SET state = 'error', finished_at = datetime('now'), error_message = ?
+         WHERE index_run_id = ?`,
+      )
+      .run(message, indexRunId);
+    cleanupStagedRows(db, indexRunId);
+  })();
+}
+
+function cleanupStagedRows(db: TracebenchDb, indexRunId: string): void {
+  db.raw.prepare('DELETE FROM staged_event_payload_refs WHERE index_run_id = ?').run(indexRunId);
+  db.raw.prepare('DELETE FROM staged_events WHERE index_run_id = ?').run(indexRunId);
+  db.raw.prepare('DELETE FROM staged_sessions WHERE index_run_id = ?').run(indexRunId);
+  db.raw
+    .prepare(
+      `DELETE FROM event_payloads
+       WHERE NOT EXISTS (
+         SELECT 1 FROM event_payload_refs
+         WHERE event_payload_refs.payload_id = event_payloads.payload_id
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM staged_event_payload_refs
+         WHERE staged_event_payload_refs.payload_id = event_payloads.payload_id
+       )`,
+    )
+    .run();
+}
+
+export function stageSession(
+  db: TracebenchDb,
+  indexRunId: string,
+  session: Session,
+  agg: SessionAggregateRow,
+): void {
+  db.raw
+    .prepare(
+      `INSERT OR REPLACE INTO staged_sessions
+         (index_run_id, session_id, session_json, aggregate_json)
+       VALUES (?, ?, ?, ?)`,
+    )
+    .run(indexRunId, session.session_id, JSON.stringify(session), JSON.stringify(agg));
+}
+
 // ── Event writes ────────────────────────────────────────────────────────────
 
 const INSERT_EVENT_SQL = `
@@ -450,6 +600,56 @@ const INSERT_EVENT_SQL = `
   ON CONFLICT(event_id) DO NOTHING
 `;
 
+const INSERT_STAGED_EVENT_SQL = `
+  INSERT INTO staged_events (
+    index_run_id,
+    event_id, session_id, turn_id, parent_event_id, timestamp, seq,
+    role, event_type, model, cost_usd, cost_method, duration_ms,
+    tok_input, tok_output, tok_cache_read, tok_cache_create, tok_reasoning,
+    tool_name, tool_status,
+    source_json, tokens_json, tool_json, content_json, metadata_json, raw_json
+  ) VALUES (
+    @index_run_id,
+    @event_id, @session_id, @turn_id, @parent_event_id, @timestamp, @seq,
+    @role, @event_type, @model, @cost_usd, @cost_method, @duration_ms,
+    @tok_input, @tok_output, @tok_cache_read, @tok_cache_create, @tok_reasoning,
+    @tool_name, @tool_status,
+    @source_json, @tokens_json, @tool_json, @content_json, @metadata_json, @raw_json
+  )
+  ON CONFLICT(index_run_id, event_id) DO NOTHING
+`;
+
+interface SerializedEventRow {
+  event_id: string;
+  session_id: string;
+  turn_id: string;
+  parent_event_id: string | null;
+  timestamp: string;
+  seq: number;
+  role: string;
+  event_type: string;
+  model: string | null;
+  cost_usd: number | null;
+  cost_method: string | null;
+  duration_ms: number | null;
+  tok_input: number | null;
+  tok_output: number | null;
+  tok_cache_read: number | null;
+  tok_cache_create: number | null;
+  tok_reasoning: number | null;
+  tool_name: string | null;
+  tool_status: string | null;
+  source_json: string;
+  tokens_json: string;
+  tool_json: string;
+  content_json: string | null;
+  metadata_json: string;
+  raw_json: string;
+  content_payload: unknown;
+  tool_payload: CanonicalEvent['tool'];
+  raw_payload: unknown;
+}
+
 export function insertEvents(
   db: TracebenchDb,
   events: CanonicalEvent[],
@@ -467,55 +667,113 @@ export function insertEvents(
   const tx = db.raw.transaction((batch: CanonicalEvent[], seq0: number) => {
     let seq = seq0;
     for (const e of batch) {
-      const content = maybeExternalizePayload(db, 'content', e.content, {
+      const row = serializeEventForStorage(db, e, seq++, {
+        rawMode: options.rawMode ?? 'full',
         payloadMode,
         payloadThresholdBytes,
       });
-      const tool = maybeExternalizeTool(db, e, {
-        payloadMode,
-        payloadThresholdBytes,
-      });
-      const raw =
-        options.rawMode === 'reference'
-          ? rawReferenceForEvent(e)
-          : maybeExternalizePayload(db, 'raw', e.raw, {
-              payloadMode,
-              payloadThresholdBytes,
-            });
-      const info = stmt.run({
-        event_id: e.event_id,
-        session_id: e.session_id,
-        turn_id: e.turn_id,
-        parent_event_id: e.parent_event_id,
-        timestamp: e.timestamp,
-        seq: seq++,
-        role: e.role,
-        event_type: e.event_type,
-        model: e.model,
-        cost_usd: e.cost_usd,
-        cost_method: e.cost_method,
-        duration_ms: e.duration_ms,
-        tok_input: e.tokens.input,
-        tok_output: e.tokens.output,
-        tok_cache_read: e.tokens.cache_read,
-        tok_cache_create: e.tokens.cache_creation,
-        tok_reasoning: e.tokens.reasoning,
-        tool_name: e.tool.name,
-        tool_status: e.tool.status,
-        source_json: JSON.stringify(e.source),
-        tokens_json: JSON.stringify(e.tokens),
-        tool_json: JSON.stringify(tool),
-        content_json: content == null ? null : JSON.stringify(content),
-        metadata_json: JSON.stringify(e.metadata),
-        raw_json: JSON.stringify(raw),
-      });
+      const info = stmt.run(row);
       if (info.changes > 0) {
-        insertPayloadRefsForEvent(db, e.event_id, content, tool, raw);
+        insertPayloadRefsForEvent(
+          db,
+          e.event_id,
+          row.content_payload,
+          row.tool_payload,
+          row.raw_payload,
+        );
       }
     }
     return seq;
   });
   return tx(events, startSeq);
+}
+
+export function stageEvents(
+  db: TracebenchDb,
+  indexRunId: string,
+  events: CanonicalEvent[],
+  startSeq = 0,
+  options: {
+    rawMode?: 'full' | 'reference';
+    payloadMode?: 'inline' | 'external';
+    payloadThresholdBytes?: number;
+  } = {},
+): number {
+  if (events.length === 0) return startSeq;
+  const stmt = db.raw.prepare(INSERT_STAGED_EVENT_SQL);
+  const payloadMode = options.payloadMode ?? 'inline';
+  const payloadThresholdBytes = options.payloadThresholdBytes ?? 64 * 1024;
+  const tx = db.raw.transaction((batch: CanonicalEvent[], seq0: number) => {
+    let seq = seq0;
+    for (const e of batch) {
+      const row = serializeEventForStorage(db, e, seq++, {
+        rawMode: options.rawMode ?? 'full',
+        payloadMode,
+        payloadThresholdBytes,
+      });
+      const info = stmt.run({ index_run_id: indexRunId, ...row });
+      if (info.changes > 0) {
+        insertPayloadRefsForStagedEvent(
+          db,
+          indexRunId,
+          e.event_id,
+          row.content_payload,
+          row.tool_payload,
+          row.raw_payload,
+        );
+      }
+    }
+    return seq;
+  });
+  return tx(events, startSeq);
+}
+
+function serializeEventForStorage(
+  db: TracebenchDb,
+  e: CanonicalEvent,
+  seq: number,
+  options: {
+    rawMode: 'full' | 'reference';
+    payloadMode: 'inline' | 'external';
+    payloadThresholdBytes: number;
+  },
+): SerializedEventRow {
+  const content = maybeExternalizePayload(db, 'content', e.content, options);
+  const tool = maybeExternalizeTool(db, e, options);
+  const raw =
+    options.rawMode === 'reference'
+      ? rawReferenceForEvent(e)
+      : maybeExternalizePayload(db, 'raw', e.raw, options);
+  return {
+    event_id: e.event_id,
+    session_id: e.session_id,
+    turn_id: e.turn_id,
+    parent_event_id: e.parent_event_id,
+    timestamp: e.timestamp,
+    seq,
+    role: e.role,
+    event_type: e.event_type,
+    model: e.model,
+    cost_usd: e.cost_usd,
+    cost_method: e.cost_method,
+    duration_ms: e.duration_ms,
+    tok_input: e.tokens.input,
+    tok_output: e.tokens.output,
+    tok_cache_read: e.tokens.cache_read,
+    tok_cache_create: e.tokens.cache_creation,
+    tok_reasoning: e.tokens.reasoning,
+    tool_name: e.tool.name,
+    tool_status: e.tool.status,
+    source_json: JSON.stringify(e.source),
+    tokens_json: JSON.stringify(e.tokens),
+    tool_json: JSON.stringify(tool),
+    content_json: content == null ? null : JSON.stringify(content),
+    metadata_json: JSON.stringify(e.metadata),
+    raw_json: JSON.stringify(raw),
+    content_payload: content,
+    tool_payload: tool,
+    raw_payload: raw,
+  };
 }
 
 export interface EventPayloadReference {
@@ -591,6 +849,20 @@ function insertPayloadRefsForEvent(
   insertPayloadRef(db, eventId, 'raw', raw);
 }
 
+function insertPayloadRefsForStagedEvent(
+  db: TracebenchDb,
+  indexRunId: string,
+  eventId: string,
+  content: unknown,
+  tool: CanonicalEvent['tool'],
+  raw: unknown,
+): void {
+  insertStagedPayloadRef(db, indexRunId, eventId, 'content', content);
+  insertStagedPayloadRef(db, indexRunId, eventId, 'tool_input', tool.input);
+  insertStagedPayloadRef(db, indexRunId, eventId, 'tool_output', tool.output);
+  insertStagedPayloadRef(db, indexRunId, eventId, 'raw', raw);
+}
+
 function insertPayloadRef(
   db: TracebenchDb,
   eventId: string,
@@ -607,6 +879,23 @@ function insertPayloadRef(
     .run(eventId, field, value.payload_id);
 }
 
+function insertStagedPayloadRef(
+  db: TracebenchDb,
+  indexRunId: string,
+  eventId: string,
+  field: string,
+  value: unknown,
+): void {
+  if (!isEventPayloadReference(value)) return;
+  db.raw
+    .prepare(
+      `INSERT OR REPLACE INTO staged_event_payload_refs
+         (index_run_id, event_id, field, payload_id)
+       VALUES (?, ?, ?, ?)`,
+    )
+    .run(indexRunId, eventId, field, value.payload_id);
+}
+
 function isEventPayloadReference(value: unknown): value is EventPayloadReference {
   return (
     typeof value === 'object' &&
@@ -617,13 +906,82 @@ function isEventPayloadReference(value: unknown): value is EventPayloadReference
 }
 
 function rawReferenceForEvent(e: CanonicalEvent): Record<string, unknown> {
-  return {
+  const ref: Record<string, unknown> = {
     _tracebench_raw: 'source_ref',
     raw_path: e.source.raw_path,
     harness: e.source.harness,
     event_id: e.event_id,
     timestamp: e.timestamp,
   };
+  if (typeof e.source.line === 'number') ref.line = e.source.line;
+  if (typeof e.source.raw_index === 'number') ref.raw_index = e.source.raw_index;
+  return ref;
+}
+
+export function publishIndexRun(
+  db: TracebenchDb,
+  indexRunId: string,
+  input: {
+    harness: Harness;
+    rawPath: string;
+    state?: DiscoveredSessionIndexState;
+  },
+): void {
+  const staged = db.raw
+    .prepare('SELECT session_json, aggregate_json FROM staged_sessions WHERE index_run_id = ?')
+    .get(indexRunId) as { session_json: string; aggregate_json: string } | undefined;
+  if (!staged) {
+    throw new Error(`index run ${indexRunId} has no staged session`);
+  }
+  const session = JSON.parse(staged.session_json) as Session;
+  const aggregate = JSON.parse(staged.aggregate_json) as SessionAggregateRow;
+
+  db.raw.transaction(() => {
+    deleteSessionEvents(db, session.session_id);
+    upsertSession(db, session, aggregate);
+    db.raw
+      .prepare(
+        `INSERT OR IGNORE INTO events (
+           event_id, session_id, turn_id, parent_event_id, timestamp, seq,
+           role, event_type, model, cost_usd, cost_method, duration_ms,
+           tok_input, tok_output, tok_cache_read, tok_cache_create, tok_reasoning,
+           tool_name, tool_status,
+           source_json, tokens_json, tool_json, content_json, metadata_json, raw_json
+         )
+         SELECT
+           event_id, session_id, turn_id, parent_event_id, timestamp, seq,
+           role, event_type, model, cost_usd, cost_method, duration_ms,
+           tok_input, tok_output, tok_cache_read, tok_cache_create, tok_reasoning,
+           tool_name, tool_status,
+           source_json, tokens_json, tool_json, content_json, metadata_json, raw_json
+         FROM staged_events
+         WHERE index_run_id = ?
+         ORDER BY seq ASC`,
+      )
+      .run(indexRunId);
+    db.raw
+      .prepare(
+        `INSERT OR REPLACE INTO event_payload_refs (event_id, field, payload_id)
+         SELECT event_id, field, payload_id
+         FROM staged_event_payload_refs
+         WHERE index_run_id = ?
+           AND EXISTS (
+             SELECT 1 FROM events
+             WHERE events.event_id = staged_event_payload_refs.event_id
+               AND events.session_id = ?
+           )`,
+      )
+      .run(indexRunId, session.session_id);
+    markDiscoveredSessionIndexed(db, input.harness, input.rawPath, input.state ?? 'hot');
+    db.raw
+      .prepare(
+        `UPDATE index_runs
+         SET state = 'published', finished_at = datetime('now'), error_message = NULL
+         WHERE index_run_id = ?`,
+      )
+      .run(indexRunId);
+    cleanupStagedRows(db, indexRunId);
+  })();
 }
 
 // ── Context snapshot writes ─────────────────────────────────────────────────

@@ -28,6 +28,14 @@ export interface AdapterLoadResult {
   events: CanonicalEvent[];
 }
 
+export type AdapterStreamChunk =
+  | { type: 'session'; session: Session }
+  | { type: 'events'; events: CanonicalEvent[] };
+
+export interface AdapterStreamOptions {
+  batchSize?: number;
+}
+
 export interface AdapterDiscoverContext {
   cursorGlobalDbPath?: string;
 }
@@ -38,6 +46,10 @@ export interface AdapterModule {
   defaultRoot(): string;
   discover(root?: string, ctx?: AdapterDiscoverContext): AdapterDiscovered[];
   load(filePath: string): Promise<AdapterLoadResult>;
+  streamLoad?(
+    filePath: string,
+    opts?: AdapterStreamOptions,
+  ): AsyncIterable<AdapterStreamChunk>;
   /** Optional: reuse expensive resources (e.g. DB snapshot) across an index pass. */
   beginIndexPass?(root?: string): void;
   endIndexPass?(): void;
@@ -49,6 +61,7 @@ const claudeCodeAdapter: AdapterModule = {
   defaultRoot: claudeCode.defaultProjectsRoot,
   discover: (root) => claudeCode.discoverSessions(root),
   load: (p) => claudeCode.loadSession(p),
+  streamLoad: (p, opts) => claudeCode.streamLoadSession(p, opts),
 };
 
 const codexAdapter: AdapterModule = {
@@ -57,6 +70,7 @@ const codexAdapter: AdapterModule = {
   defaultRoot: codex.defaultCodexRoot,
   discover: (root) => codex.discoverSessions(root),
   load: (p) => codex.loadSession(p),
+  streamLoad: (p, opts) => codex.streamLoadSession(p, opts),
 };
 
 const cursorAdapter: AdapterModule = {
@@ -74,6 +88,7 @@ const cursorAdapter: AdapterModule = {
       size: d.size,
     })),
   load: (p) => cursor.loadSession(p),
+  streamLoad: (p, opts) => cursor.streamLoadSession(p, opts),
 };
 
 const opencodeAdapter: AdapterModule = {

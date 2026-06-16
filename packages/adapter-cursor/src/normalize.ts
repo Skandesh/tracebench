@@ -305,7 +305,7 @@ export function normalizeSession(
   return { session, events };
 }
 
-import { parseSession } from './parse.js';
+import { parseSession, streamSessionRecords } from './parse.js';
 import { promises as fs } from 'node:fs';
 import { isComposerDbUri } from './db-uri.js';
 import { loadComposerSession } from './load-db.js';
@@ -334,4 +334,72 @@ export async function loadSession(
     fileMtimeMs,
     encodedProjectDir: opts.encodedProjectDir,
   });
+}
+
+export async function* streamLoadSession(
+  filePath: string,
+  opts: { formatVersion?: string; encodedProjectDir?: string; batchSize?: number } = {},
+): AsyncIterable<
+  | { type: 'session'; session: Session }
+  | { type: 'events'; events: CanonicalEvent[] }
+> {
+  if (isComposerDbUri(filePath)) {
+    const normalized = await loadComposerSession(filePath, opts);
+    yield { type: 'session', session: normalized.session };
+    const batchSize = Math.max(1, opts.batchSize ?? 500);
+    for (let i = 0; i < normalized.events.length; i += batchSize) {
+      yield { type: 'events', events: normalized.events.slice(i, i + batchSize) };
+    }
+    return;
+  }
+
+  const records: Array<{ raw: RawCursorEvent; line: number }> = [];
+  for await (const record of streamSessionRecords(filePath)) {
+    records.push(record);
+  }
+  let fileMtimeMs: number | undefined;
+  try {
+    const st = await fs.stat(filePath);
+    fileMtimeMs = st.mtimeMs;
+  } catch {
+    // ignore
+  }
+  const sessionId = filePath.split('/').pop()?.replace(/\.jsonl$/, '');
+  const lineByRaw = new WeakMap<object, number>();
+  records.forEach((record) => lineByRaw.set(record.raw, record.line));
+  const normalized = normalizeSession(
+    records.map((r) => r.raw),
+    {
+      rawPath: filePath,
+      sessionId,
+      formatVersion: opts.formatVersion ?? '2026-q1',
+      fileMtimeMs,
+      encodedProjectDir: opts.encodedProjectDir,
+    },
+  );
+  yield { type: 'session', session: normalized.session };
+  const batchSize = Math.max(1, opts.batchSize ?? 500);
+  let batch: CanonicalEvent[] = [];
+  for (const event of normalized.events) {
+    batch.push(attachSourceLocator(event, lineByRaw));
+    if (batch.length >= batchSize) {
+      yield { type: 'events', events: batch };
+      batch = [];
+    }
+  }
+  if (batch.length > 0) yield { type: 'events', events: batch };
+}
+
+function attachSourceLocator(
+  event: CanonicalEvent,
+  lineByRaw: WeakMap<object, number>,
+): CanonicalEvent {
+  let line: number | undefined;
+  if (typeof event.raw === 'object' && event.raw !== null) {
+    line = lineByRaw.get(event.raw);
+    const refLine = (event.raw as { _ref_line?: unknown })._ref_line;
+    if (line == null && typeof refLine === 'number') line = refLine + 1;
+  }
+  if (line == null) return event;
+  return { ...event, source: ({ ...(event.source as unknown as Record<string, unknown>), line } as unknown as CanonicalEvent['source']) };
 }

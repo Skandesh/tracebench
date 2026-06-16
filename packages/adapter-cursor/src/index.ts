@@ -22,6 +22,7 @@ export {
   loadSession,
   normalizeSession,
   parseTranscriptPath,
+  streamLoadSession,
   type NormalizeResult,
 } from './normalize.js';
 export { loadComposerSession } from './load-db.js';

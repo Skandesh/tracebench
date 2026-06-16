@@ -221,6 +221,26 @@ describe('GET /api/sessions/:id/events', () => {
     }
     expect(body.events[0]!.raw._tracebench_raw).toBe('source_ref');
   });
+
+  it('returns source-backed raw JSON for an event without re-parsing the whole session', async () => {
+    const eventsRes = await server.app.inject({
+      method: 'GET',
+      url: '/api/sessions/fix-sess-01/events',
+    });
+    const first = (eventsRes.json() as { events: Array<{ event_id: string }> }).events[0]!;
+    const rawRes = await server.app.inject({
+      method: 'GET',
+      url: `/api/sessions/fix-sess-01/events/${encodeURIComponent(first.event_id)}/raw`,
+    });
+    expect(rawRes.statusCode).toBe(200);
+    const body = rawRes.json() as {
+      raw: Record<string, unknown>;
+      provenance: { kind: string; available: boolean; line?: number };
+    };
+    expect(body.provenance).toMatchObject({ kind: 'source_ref', available: true });
+    expect(typeof body.provenance.line).toBe('number');
+    expect(body.raw.sessionId).toBe('fix-sess-01');
+  });
 });
 
 describe('GET /api/pricing', () => {

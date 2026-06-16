@@ -8,15 +8,22 @@
 // point at a non-default Codex / Claude Code dir.
 
 import {
-  upsertSession,
-  insertEvents,
-  deleteSessionEvents,
-  summarizeEvents,
+  beginIndexRun,
+  stageSession,
+  stageEvents,
+  publishIndexRun,
+  failIndexRun,
   upsertDiscoveredSession,
-  markDiscoveredSessionIndexed,
+  markDiscoveredSessionIndexing,
   markDiscoveredSessionError,
 } from '@tracebench/core';
-import type { Harness, TracebenchDb } from '@tracebench/core';
+import type {
+  CanonicalEvent,
+  Harness,
+  Session,
+  SessionAggregateRow,
+  TracebenchDb,
+} from '@tracebench/core';
 import { ADAPTERS, type AdapterModule, type AdapterDiscovered } from './adapters.js';
 
 export interface IndexResult {
@@ -46,6 +53,7 @@ export interface IndexOptions {
   /** Move large content/tool/raw blobs out of hot event rows by default. */
   payloadMode?: 'inline' | 'external';
   payloadThresholdBytes?: number;
+  indexBatchSize?: number;
   /** Log per-session progress to stderr. */
   verbose?: boolean;
   /** Only run the adapters whose harness names are listed. */
@@ -197,22 +205,123 @@ async function indexOne(
   d: AdapterDiscovered,
   opts: IndexOptions,
 ): Promise<void> {
-  const { session, events } = await adapter.load(d.file_path);
-  session.mtime_ms = d.mtime_ms;
-  // Summarize once, in-memory, while we already have all the events. Stored
-  // on the sessions row so /api/sessions is a pure SELECT — no GROUP BY.
-  const aggregates = summarizeEvents(events);
-  const tx = db.raw.transaction(() => {
-    deleteSessionEvents(db, session.session_id);
-    upsertSession(db, session, aggregates);
-    insertEvents(db, events, 0, {
-      rawMode: opts.rawMode ?? 'reference',
-      payloadMode: opts.payloadMode ?? 'external',
-      payloadThresholdBytes: opts.payloadThresholdBytes,
-    });
-    markDiscoveredSessionIndexed(db, adapter.harness, d.file_path, 'hot');
+  markDiscoveredSessionIndexing(db, adapter.harness, d.file_path);
+  const runId = beginIndexRun(db, {
+    harness: adapter.harness,
+    session_id: d.session_id,
+    raw_path: d.file_path,
   });
-  tx();
+  try {
+    const aggregate = createAggregateAccumulator();
+    let session: Session | null = null;
+    let seq = 0;
+
+    if (adapter.streamLoad) {
+      for await (const chunk of adapter.streamLoad(d.file_path, {
+        batchSize: opts.indexBatchSize,
+      })) {
+        if (chunk.type === 'session') {
+          session = { ...chunk.session, mtime_ms: d.mtime_ms };
+          continue;
+        }
+        aggregate.add(chunk.events);
+        seq = stageEvents(db, runId, chunk.events, seq, {
+          rawMode: opts.rawMode ?? 'reference',
+          payloadMode: opts.payloadMode ?? 'external',
+          payloadThresholdBytes: opts.payloadThresholdBytes,
+        });
+      }
+    } else {
+      const loaded = await adapter.load(d.file_path);
+      session = { ...loaded.session, mtime_ms: d.mtime_ms };
+      aggregate.add(loaded.events);
+      seq = stageEvents(db, runId, loaded.events, seq, {
+        rawMode: opts.rawMode ?? 'reference',
+        payloadMode: opts.payloadMode ?? 'external',
+        payloadThresholdBytes: opts.payloadThresholdBytes,
+      });
+    }
+
+    if (!session) {
+      throw new Error(`adapter ${adapter.harness} did not produce a session header`);
+    }
+    stageSession(db, runId, session, aggregate.value());
+    publishIndexRun(db, runId, {
+      harness: adapter.harness,
+      rawPath: d.file_path,
+      state: 'hot',
+    });
+  } catch (e) {
+    failIndexRun(db, runId, e instanceof Error ? e.message : String(e));
+    throw e;
+  }
+}
+
+interface AggregateAccumulator {
+  add(events: readonly CanonicalEvent[]): void;
+  value(): SessionAggregateRow;
+}
+
+function createAggregateAccumulator(): AggregateAccumulator {
+  let total_cost_usd = 0;
+  let total_input_tokens = 0;
+  let total_output_tokens = 0;
+  let total_cache_read_tokens = 0;
+  let total_cache_create_tokens = 0;
+  let total_reasoning_tokens = 0;
+  let duration_ms = 0;
+  let tool_call_count = 0;
+  let tool_error_count = 0;
+  let message_count = 0;
+  const turnIds = new Set<string>();
+  let firstTs: string | null = null;
+  let lastTs: string | null = null;
+
+  return {
+    add(events) {
+      for (const e of events) {
+        if (e.cost_usd != null) total_cost_usd += e.cost_usd;
+        if (e.tokens.input != null) total_input_tokens += e.tokens.input;
+        if (e.tokens.output != null) total_output_tokens += e.tokens.output;
+        if (e.tokens.cache_read != null) total_cache_read_tokens += e.tokens.cache_read;
+        if (e.tokens.cache_creation != null) {
+          total_cache_create_tokens += e.tokens.cache_creation;
+        }
+        if (e.tokens.reasoning != null) total_reasoning_tokens += e.tokens.reasoning;
+        if (e.duration_ms != null) duration_ms += e.duration_ms;
+        if (e.event_type === 'tool_call') tool_call_count++;
+        if (e.tool.status === 'error') tool_error_count++;
+        if (e.event_type === 'message') message_count++;
+        if (e.turn_id) turnIds.add(e.turn_id);
+        if (e.timestamp) {
+          if (!firstTs || e.timestamp < firstTs) firstTs = e.timestamp;
+          if (!lastTs || e.timestamp > lastTs) lastTs = e.timestamp;
+        }
+      }
+    },
+    value() {
+      let resolvedDurationMs = duration_ms;
+      if (resolvedDurationMs === 0 && firstTs && lastTs) {
+        resolvedDurationMs = Math.max(
+          0,
+          new Date(lastTs).getTime() - new Date(firstTs).getTime(),
+        );
+      }
+      return {
+        total_cost_usd,
+        total_input_tokens,
+        total_output_tokens,
+        total_cache_read_tokens,
+        total_cache_create_tokens,
+        total_reasoning_tokens,
+        duration_ms: resolvedDurationMs,
+        turn_count: turnIds.size,
+        tool_call_count,
+        tool_error_count,
+        message_count,
+      };
+    },
+  };
 }
 
 function checkpointWal(db: TracebenchDb): void {

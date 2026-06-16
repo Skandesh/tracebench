@@ -108,7 +108,7 @@ html, body {
 
 .tb-app {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto 1fr;
   height: 100vh;
   background: var(--bg);
 }
@@ -219,6 +219,42 @@ kbd {
   gap: 8px;
   padding: 0 12px;
   min-width: 0;
+}
+
+.tb-storage-strip {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--text-faint);
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+}
+
+.tb-storage-strip button {
+  margin-left: auto;
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-mute);
+  border-radius: 999px;
+  padding: 3px 8px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tb-storage-strip button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.tb-storage-strip button:disabled {
+  opacity: 0.65;
+  cursor: wait;
 }
 
 .tb-harness-tabs {
@@ -526,6 +562,13 @@ kbd {
   position: relative;
 }
 .tb-sess:hover { background: var(--bg-elev); }
+.tb-sess[data-indexed="0"] {
+  cursor: default;
+  opacity: 0.92;
+}
+.tb-sess[data-indexed="0"]:hover {
+  background: transparent;
+}
 .tb-sess[data-active="1"] {
   background: var(--bg-elev-2);
   border-color: var(--border);
@@ -548,10 +591,28 @@ kbd {
   font-family: 'Geist Mono', monospace;
   font-size: 10px;
   color: var(--text-faint);
-  flex: 1;
   letter-spacing: 0;
 }
+.tb-sess-state {
+  font-family: 'Geist Mono', monospace;
+  font-size: 9.5px;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 5px;
+  line-height: 16px;
+}
+.tb-sess-state-discovered,
+.tb-sess-state-indexing {
+  color: var(--accent);
+  border-color: oklch(from var(--accent) l c h / 0.45);
+}
+.tb-sess-state-error {
+  color: var(--color-error-hover);
+  border-color: oklch(from var(--color-error) l c h / 0.45);
+}
 .tb-sess-time {
+  margin-left: auto;
   font-family: 'Geist Mono', monospace;
   font-size: 10.5px;
   color: var(--text-faint);
@@ -631,6 +692,27 @@ kbd {
 }
 .tb-sess-err-btn:hover {
   text-decoration-color: var(--color-error-hover);
+}
+
+.tb-sess-index-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--text-mute);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tb-sess-index-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.tb-sess-index-btn:disabled {
+  opacity: 0.65;
+  cursor: wait;
 }
 
 /* ── Session header (center pane) ────────────────────────────────────────── */

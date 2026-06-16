@@ -8,15 +8,30 @@ export type RawCursorEvent = Record<string, unknown> & {
   message?: unknown;
 };
 
+export interface RawCursorRecord {
+  raw: RawCursorEvent;
+  line: number;
+}
+
 export async function* streamSession(
   filePath: string,
 ): AsyncIterable<RawCursorEvent> {
+  for await (const record of streamSessionRecords(filePath)) {
+    yield record.raw;
+  }
+}
+
+export async function* streamSessionRecords(
+  filePath: string,
+): AsyncIterable<RawCursorRecord> {
   const stream = createReadStream(filePath, { encoding: 'utf8' });
   const rl = createInterface({ input: stream, crlfDelay: Infinity });
+  let lineNo = 0;
   for await (const line of rl) {
+    lineNo++;
     if (!line.trim()) continue;
     try {
-      yield JSON.parse(line) as RawCursorEvent;
+      yield { raw: JSON.parse(line) as RawCursorEvent, line: lineNo };
     } catch {
       continue;
     }

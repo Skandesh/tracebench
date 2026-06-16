@@ -8,6 +8,7 @@ export type Harness = 'claude_code' | 'opencode' | 'codex' | 'cursor';
 
 export type DiscoveredSessionIndexState =
   | 'discovered'
+  | 'indexing'
   | 'hot'
   | 'warm'
   | 'raw_archived'
@@ -31,6 +32,10 @@ export interface EventSource {
   harness: Harness;
   format_version: string;
   raw_path: string;
+  /** 1-based JSONL line number when the adapter can identify the source row. */
+  line?: number;
+  /** 0-based raw record index when line numbers are unavailable or synthetic. */
+  raw_index?: number;
 }
 
 export interface EventTokens {

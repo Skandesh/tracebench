@@ -2,6 +2,7 @@ export * from './schema.js';
 export * from './db.js';
 export * from './search-chunks.js';
 export * from './search.js';
+export * from './search-backfill.js';
 export * from './pricing.js';
 export * from './query.js';
 export * from './aggregate.js';

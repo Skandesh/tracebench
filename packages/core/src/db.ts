@@ -1206,6 +1206,14 @@ export function publishIndexRun(
         )
         .run(indexRunId);
     }
+    // Mark this session lexically up to date so the backfill (U6) skips it.
+    db.raw
+      .prepare(
+        `INSERT INTO search_backfill_state (session_id, mtime_ms, lexical_done)
+         VALUES (?, ?, 1)
+         ON CONFLICT(session_id) DO UPDATE SET mtime_ms = excluded.mtime_ms, lexical_done = 1`,
+      )
+      .run(session.session_id, session.mtime_ms);
     markDiscoveredSessionIndexed(db, input.harness, input.rawPath, input.state ?? 'hot');
     db.raw
       .prepare(

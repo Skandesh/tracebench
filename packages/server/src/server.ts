@@ -6,7 +6,7 @@ import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openDb } from '@tracebench/core';
+import { openDb, backfillSearchChunks } from '@tracebench/core';
 import { defaultCursorUserDataDir } from '@tracebench/adapter-cursor';
 import type { Harness, TracebenchDb } from '@tracebench/core';
 import { defaultDbPath } from './paths.js';
@@ -131,9 +131,46 @@ export async function buildServer(opts: ServerOptions = {}): Promise<BuiltServer
         `[tracebench] indexed ${result.indexed} / ${result.scanned} sessions (${perHarness}; ${result.skipped} unchanged, ${result.deferred} deferred, ${result.errors.length} errors) in ${result.duration_ms}ms\n`,
       );
     }
+    // Lexical search backfill — strictly AFTER indexing resolves, fire-and-forget
+    // so it never blocks readiness. Brings sessions that predate the search index
+    // (or were indexed before this version) into search without a manual reindex.
+    void runLexicalBackfill(db, opts.verbose);
   }
 
   return { app, db };
+}
+
+/**
+ * Bounded background loop draining the lexical search backfill. Each batch is a
+ * set of per-session atomic transactions; we checkpoint WAL and yield between
+ * batches so foreground requests stay responsive (RISK11/S1).
+ */
+async function runLexicalBackfill(db: TracebenchDb, verbose?: boolean): Promise<void> {
+  try {
+    let total = 0;
+    for (;;) {
+      const { processed, remaining } = backfillSearchChunks(db, { limit: 25 });
+      total += processed;
+      if (processed > 0) {
+        try {
+          db.raw.pragma('wal_checkpoint(TRUNCATE)');
+        } catch {
+          /* checkpoint is best-effort */
+        }
+      }
+      if (processed === 0 || remaining === 0) break;
+      await new Promise((r) => setImmediate(r));
+    }
+    if (verbose && total > 0) {
+      process.stderr.write(`[tracebench] search backfill: indexed ${total} session(s)\n`);
+    }
+  } catch (e) {
+    if (verbose) {
+      process.stderr.write(
+        `[tracebench] search backfill error: ${e instanceof Error ? e.message : String(e)}\n`,
+      );
+    }
+  }
 }
 
 const LANDING_HTML = `<!doctype html>

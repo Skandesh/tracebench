@@ -353,6 +353,22 @@ function isIndexedSession(s: Session): boolean {
   return s.indexed !== false;
 }
 
+// Discovered-only sessions have no parsed cwd yet, so they fall back to the raw
+// JSONL path — which makes the Projects sidebar show "<uuid>.jsonl". Claude Code
+// and Cursor store sessions under `…/projects/<encoded-cwd>/…`, where the cwd is
+// encoded with '/' → '-'. Decode that segment so discovered-only sessions show
+// (and group by) their real project. Best-effort: the encoding is lossy for
+// project dirs that contain '-', but it's a far better hint than a UUID, and
+// indexed sessions always use the authoritative cwd. Harnesses without a
+// project segment (e.g. Codex date dirs) keep the raw path.
+function discoveredProjectPath(rawPath: string): string {
+  const parts = rawPath.split('/').filter(Boolean);
+  const i = parts.lastIndexOf('projects');
+  const encoded = i >= 0 ? parts[i + 1] : undefined;
+  if (encoded) return encoded.replace(/-/g, '/');
+  return rawPath;
+}
+
 function mergeIndexedAndDiscoveredSessions(
   indexed: Session[],
   discovered: DiscoveredSession[],
@@ -378,7 +394,7 @@ function mergeIndexedAndDiscoveredSessions(
     out.push({
       session_id: d.session_id,
       harness: d.harness,
-      project_path: d.raw_path,
+      project_path: discoveredProjectPath(d.raw_path),
       title: null,
       started_at: startedAt,
       ended_at: null,

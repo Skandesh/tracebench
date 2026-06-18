@@ -8,13 +8,15 @@
 // displayed page; highlights are emitted as sentinel-delimited spans (the UI
 // renders them as text nodes — no HTML injection).
 
-import type { TracebenchDb } from './db.js';
+import { countVectors, type TracebenchDb } from './db.js';
+import { DEFAULT_MAX_VECTOR_CHUNKS } from './search-embed.js';
 import type { Harness, Session } from './schema.js';
 
 const RRF_K = 60; // Cormack et al. RRF default (TREC-tuned); see plan KTD5.
 const CANDIDATE_LIMIT = 50; // per-list candidate count (recall vs latency knob)
 const WORD_WEIGHT = 1.0;
 const TRIGRAM_WEIGHT = 1.5; // favor exact-substring/code matches
+const VEC_WEIGHT = 1.0; // semantic leg weight in the fusion
 const MIN_TRIGRAM_LEN = 3; // trigram tokenizer cannot match shorter tokens
 const MAX_MATCHES_PER_SESSION = 3;
 const DEFAULT_LIMIT = 25;
@@ -147,17 +149,28 @@ function makeSnippet(text: string, tokens: string[], maxLen = 200): string {
   return prefix + highlighted + suffix;
 }
 
-export function searchEvents(db: TracebenchDb, opts: SearchEventsOptions): SearchEventsResult {
-  const empty: SearchEventsResult = {
-    results: [],
-    total: 0,
-    semanticAvailable: db.vectorsAvailable,
-  };
+export interface SearchDeps {
+  /** Embed the query for the semantic leg; return null to skip semantics. */
+  embedQuery?: (q: string) => Promise<number[] | null>;
+  /** Vector budget; above the stored-vector count, the semantic leg is skipped. */
+  maxVectorChunks?: number;
+}
+
+export async function searchEvents(
+  db: TracebenchDb,
+  opts: SearchEventsOptions,
+  deps: SearchDeps = {},
+): Promise<SearchEventsResult> {
+  const budget = deps.maxVectorChunks ?? DEFAULT_MAX_VECTOR_CHUNKS;
+  const vectorCount = db.vectorsAvailable ? countVectors(db) : 0;
+  const semanticAvailable =
+    db.vectorsAvailable && !!deps.embedQuery && vectorCount > 0 && vectorCount <= budget;
+  const empty: SearchEventsResult = { results: [], total: 0, semanticAvailable };
   const { match, longTokens, tokens } = toFtsMatch(opts.q);
   if (match == null) return empty;
 
-  // ── Candidate retrieval + fusion (lexical; U9 adds the semantic leg) ──
-  let fused: { chunk_id: number; score: number }[];
+  // ── Lexical candidate lists ──
+  const lists: { rows: { chunk_id: number }[]; weight: number }[] = [];
   if (db.ftsAvailable && longTokens.length > 0) {
     const wordRows = db.raw
       .prepare('SELECT rowid AS chunk_id FROM fts_words WHERE fts_words MATCH ? ORDER BY rank LIMIT ?')
@@ -166,18 +179,43 @@ export function searchEvents(db: TracebenchDb, opts: SearchEventsOptions): Searc
     const triRows = db.raw
       .prepare('SELECT rowid AS chunk_id FROM fts_tri WHERE fts_tri MATCH ? ORDER BY rank LIMIT ?')
       .all(triMatch, CANDIDATE_LIMIT) as { chunk_id: number }[];
-    fused = rrf([
-      { rows: wordRows, weight: WORD_WEIGHT },
-      { rows: triRows, weight: TRIGRAM_WEIGHT },
-    ]);
+    lists.push({ rows: wordRows, weight: WORD_WEIGHT }, { rows: triRows, weight: TRIGRAM_WEIGHT });
   } else {
     // Short-token-only query, or FTS unavailable → bounded LIKE substring scan.
     const like = `%${escapeLike(opts.q.trim())}%`;
-    const rows = db.raw
+    const likeRows = db.raw
       .prepare("SELECT chunk_id FROM search_chunks WHERE text LIKE ? ESCAPE '\\' LIMIT ?")
       .all(like, CANDIDATE_LIMIT) as { chunk_id: number }[];
-    fused = rows.map((r, i) => ({ chunk_id: r.chunk_id, score: 1 / (RRF_K + i + 1) }));
+    lists.push({ rows: likeRows, weight: WORD_WEIGHT });
   }
+
+  // ── Semantic leg (U9): embed the query, KNN over vec_chunks, fuse as a third
+  // list. Degrades to lexical on any failure. ──
+  const semanticIds = new Set<number>();
+  if (semanticAvailable) {
+    try {
+      const qv = await deps.embedQuery!(opts.q);
+      if (qv && qv.length) {
+        const buf = Buffer.from(Float32Array.from(qv).buffer);
+        const knn = (
+          opts.harness
+            ? db.raw
+                .prepare('SELECT chunk_id FROM vec_chunks WHERE embedding MATCH ? AND k = ? AND harness = ? ORDER BY distance')
+                .all(buf, CANDIDATE_LIMIT, opts.harness)
+            : db.raw
+                .prepare('SELECT chunk_id FROM vec_chunks WHERE embedding MATCH ? AND k = ? ORDER BY distance')
+                .all(buf, CANDIDATE_LIMIT)
+        ) as { chunk_id: number | bigint }[];
+        const vecRows = knn.map((r) => ({ chunk_id: Number(r.chunk_id) }));
+        for (const r of vecRows) semanticIds.add(r.chunk_id);
+        lists.push({ rows: vecRows, weight: VEC_WEIGHT });
+      }
+    } catch {
+      // degrade to lexical for this query
+    }
+  }
+
+  const fused = rrf(lists);
   if (fused.length === 0) return empty;
 
   // ── Map chunks → sessions (one batched lookup; preserve fused order) ──
@@ -214,7 +252,7 @@ export function searchEvents(db: TracebenchDb, opts: SearchEventsOptions): Searc
   const offset = opts.offset ?? 0;
   const limit = opts.limit ?? DEFAULT_LIMIT;
   const pageIds = sessionIds.slice(offset, offset + limit);
-  if (pageIds.length === 0) return { results: [], total, semanticAvailable: db.vectorsAvailable };
+  if (pageIds.length === 0) return { results: [], total, semanticAvailable };
 
   // ── Batched session-row join — no GROUP BY over events, no N+1 ──
   const sessionRows = db.raw
@@ -238,9 +276,9 @@ export function searchEvents(db: TracebenchDb, opts: SearchEventsOptions): Searc
         event_id: m.event_id,
         turn_id: m.turn_id,
         snippet: makeSnippet(m.text, tokens),
-        source: 'lexical' as const,
+        source: (semanticIds.has(m.chunk_id) ? 'semantic' : 'lexical') as 'lexical' | 'semantic',
       })),
     });
   }
-  return { results, total, semanticAvailable: db.vectorsAvailable };
+  return { results, total, semanticAvailable };
 }

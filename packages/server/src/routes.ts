@@ -25,6 +25,11 @@ export interface RouteContext {
   dbPath?: string;
   roots: Partial<Record<Harness, string | undefined>>;
   cursorGlobalDbPath?: string;
+  /** Shared local embedder for the semantic search leg; set by the background
+   *  pipeline once the model loads (null until then → lexical-only). */
+  embedder?: { embed: (texts: string[]) => Promise<number[][]> } | null;
+  /** Vector budget for the semantic leg. */
+  maxVectorChunks?: number;
 }
 
 export async function registerRoutes(
@@ -62,12 +67,23 @@ export async function registerRoutes(
     const rawHarness = req.query.harness;
     const harness =
       rawHarness && rawHarness !== 'all' ? (rawHarness as Harness) : undefined;
-    return searchEvents(ctx.db, {
-      q: req.query.q ?? '',
-      harness,
-      limit: req.query.limit ? Number(req.query.limit) : undefined,
-      offset: req.query.offset ? Number(req.query.offset) : undefined,
-    });
+    const embedder = ctx.embedder;
+    const embedQuery = embedder
+      ? async (q: string): Promise<number[] | null> => {
+          const [v] = await embedder.embed([q]);
+          return v ?? null;
+        }
+      : undefined;
+    return searchEvents(
+      ctx.db,
+      {
+        q: req.query.q ?? '',
+        harness,
+        limit: req.query.limit ? Number(req.query.limit) : undefined,
+        offset: req.query.offset ? Number(req.query.offset) : undefined,
+      },
+      { embedQuery, maxVectorChunks: ctx.maxVectorChunks },
+    );
   });
 
   app.get<{ Params: { id: string } }>(

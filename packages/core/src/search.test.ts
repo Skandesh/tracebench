@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { openDb, upsertSession, insertSearchChunk, chunkIdFor, type TracebenchDb } from './db.js';
+import {
+  openDb,
+  upsertSession,
+  insertSearchChunk,
+  insertVector,
+  chunkIdFor,
+  type TracebenchDb,
+} from './db.js';
 import { searchEvents, toFtsMatch, SNIPPET_OPEN } from './search.js';
 import type { Harness, Session } from './schema.js';
 
@@ -66,62 +73,110 @@ describe('toFtsMatch', () => {
 });
 
 describe('searchEvents (U3)', () => {
-  it('returns empty for an empty query without error', () => {
-    expect(searchEvents(db, { q: '' })).toEqual({ results: [], total: 0, semanticAvailable: false });
+  it('returns empty for an empty query without error', async () => {
+    expect(await searchEvents(db, { q: '' })).toEqual({ results: [], total: 0, semanticAvailable: false });
   });
 
-  it('does not throw on FTS operator characters or reserved words', () => {
-    expect(() => searchEvents(db, { q: 'a + b (c) "x' })).not.toThrow();
-    expect(() => searchEvents(db, { q: 'AND OR NOT' })).not.toThrow();
-    expect(() => searchEvents(db, { q: 'foo* -bar ^baz' })).not.toThrow();
+  it('does not throw on FTS operator characters or reserved words', async () => {
+    await expect(searchEvents(db, { q: 'a + b (c) "x' })).resolves.toBeDefined();
+    await expect(searchEvents(db, { q: 'AND OR NOT' })).resolves.toBeDefined();
+    await expect(searchEvents(db, { q: 'foo* -bar ^baz' })).resolves.toBeDefined();
   });
 
-  it('matches a code identifier as a substring (trigram leg)', () => {
-    const r = searchEvents(db, { q: 'useMemo' });
+  it('matches a code identifier as a substring (trigram leg)', async () => {
+    const r = await searchEvents(db, { q: 'useMemo' });
     expect(r.results.map((g) => g.session.session_id)).toContain('sess-a');
   });
 
-  it('matches a file path', () => {
-    const r = searchEvents(db, { q: 'packages/core/src/db.ts' });
+  it('matches a file path', async () => {
+    const r = await searchEvents(db, { q: 'packages/core/src/db.ts' });
     expect(r.results.map((g) => g.session.session_id)).toContain('sess-a');
   });
 
-  it('matches an error string inside an event body', () => {
-    const r = searchEvents(db, { q: 'ENOENT' });
+  it('matches an error string inside an event body', async () => {
+    const r = await searchEvents(db, { q: 'ENOENT' });
     expect(r.results.map((g) => g.session.session_id)).toContain('sess-b');
   });
 
-  it('filters by harness', () => {
-    const r = searchEvents(db, { q: 'ENOENT', harness: 'claude_code' });
+  it('filters by harness', async () => {
+    const r = await searchEvents(db, { q: 'ENOENT', harness: 'claude_code' });
     expect(r.results).toHaveLength(0); // ENOENT lives in the codex session only
-    const r2 = searchEvents(db, { q: 'ENOENT', harness: 'codex' });
+    const r2 = await searchEvents(db, { q: 'ENOENT', harness: 'codex' });
     expect(r2.results.map((g) => g.session.session_id)).toEqual(['sess-b']);
   });
 
-  it('falls back to LIKE for sub-3-char substring queries (no FTS error)', () => {
-    const r = searchEvents(db, { q: 'fs' });
+  it('falls back to LIKE for sub-3-char substring queries (no FTS error)', async () => {
+    const r = await searchEvents(db, { q: 'fs' });
     expect(r.results.map((g) => g.session.session_id)).toContain('sess-a'); // useFsModule
   });
 
-  it('groups matches by session and returns the precomputed session row', () => {
-    const r = searchEvents(db, { q: 'the' });
+  it('groups matches by session and returns the precomputed session row', async () => {
+    const r = await searchEvents(db, { q: 'the' });
     const a = r.results.find((g) => g.session.session_id === 'sess-a');
     expect(a).toBeTruthy();
     expect(a!.session.title).toBe('sess-a title');
     expect(a!.matches.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('returns snippets with sentinel-delimited highlights', () => {
-    const r = searchEvents(db, { q: 'quick' });
+  it('returns snippets with sentinel-delimited highlights', async () => {
+    const r = await searchEvents(db, { q: 'quick' });
     const a = r.results.find((g) => g.session.session_id === 'sess-a');
     expect(a).toBeTruthy();
     const snip = a!.matches.map((m) => m.snippet).join(' ');
     expect(snip).toContain(SNIPPET_OPEN);
   });
 
-  it('paginates at the session level', () => {
-    const r = searchEvents(db, { q: 'the', limit: 1, offset: 0 });
+  it('paginates at the session level', async () => {
+    const r = await searchEvents(db, { q: 'the', limit: 1, offset: 0 });
     expect(r.results).toHaveLength(1);
     expect(r.total).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('searchEvents hybrid semantic leg (U9)', () => {
+  function vec384(prefix: number[]): number[] {
+    const v = new Array(384).fill(0);
+    for (let i = 0; i < prefix.length; i++) v[i] = prefix[i];
+    return v;
+  }
+
+  it('surfaces a session via semantic recall that lexical misses, and marks the match', async () => {
+    const vdb = openDb({ path: ':memory:', enableVectors: true });
+    try {
+      upsertSession(vdb, {
+        session_id: 'sv',
+        harness: 'claude_code',
+        project_path: '/p',
+        title: 'auth work',
+        started_at: '2026-06-18T00:00:00.000Z',
+        ended_at: null,
+        model: null,
+        raw_path: '/x',
+        format_version: '1',
+        mtime_ms: 1,
+      });
+      const c = { chunk_id: chunkIdFor('e', 0), event_id: 'e', session_id: 'sv', turn_id: null, harness: 'claude_code', chunk_seq: 0, text: 'refreshed the login token on expiry', content_hash: 'h' };
+      insertSearchChunk(vdb, c);
+      insertVector(vdb, c.chunk_id, 'claude_code', vec384([1, 0, 0]));
+
+      // 'gamma' appears nowhere lexically; the query embedding is near the chunk's vector.
+      const embedQuery = async (_q: string) => vec384([1, 0, 0]);
+      const r = await searchEvents(vdb, { q: 'gamma' }, { embedQuery, maxVectorChunks: 100 });
+      expect(r.semanticAvailable).toBe(true);
+      expect(r.results.map((g) => g.session.session_id)).toContain('sv');
+      expect(r.results[0].matches.some((m) => m.source === 'semantic')).toBe(true);
+    } finally {
+      vdb.close();
+    }
+  });
+
+  it('without an embedder, behaves as lexical-only (semanticAvailable false)', async () => {
+    const vdb = openDb({ path: ':memory:', enableVectors: true });
+    try {
+      const r = await searchEvents(vdb, { q: 'gamma' });
+      expect(r.semanticAvailable).toBe(false);
+    } finally {
+      vdb.close();
+    }
   });
 });

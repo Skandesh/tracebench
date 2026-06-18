@@ -56,21 +56,21 @@ beforeEach(() => {
 });
 
 describe('backfillSearchChunks (U6)', () => {
-  it('makes an events-only session searchable, then is idempotent', () => {
+  it('makes an events-only session searchable, then is idempotent', async () => {
     upsertSession(db, makeSession('sess-a'));
     insertEvents(db, [makeEvent('sess-a', { content: 'investigate the parser regression' })]);
     expect(countPendingLexicalBackfill(db)).toBe(1);
 
     const r1 = backfillSearchChunks(db);
     expect(r1).toEqual({ processed: 1, remaining: 0 });
-    expect(searchEvents(db, { q: 'parser regression' }).results.map((g) => g.session.session_id)).toContain('sess-a');
+    expect((await searchEvents(db, { q: 'parser regression' })).results.map((g) => g.session.session_id)).toContain('sess-a');
 
     // Idempotent — already marked done.
     expect(backfillSearchChunks(db)).toEqual({ processed: 0, remaining: 0 });
     expect((db.raw.prepare('SELECT count(*) c FROM search_chunks WHERE session_id = ?').get('sess-a') as { c: number }).c).toBe(1);
   });
 
-  it('decompresses externalized payloads and indexes their text', () => {
+  it('decompresses externalized payloads and indexes their text', async () => {
     upsertSession(db, makeSession('sess-x'));
     insertEvents(
       db,
@@ -86,7 +86,7 @@ describe('backfillSearchChunks (U6)', () => {
     );
     backfillSearchChunks(db);
     // The needle lives only inside an externalized (gzipped) tool output.
-    expect(searchEvents(db, { q: 'zzcompressed' }).results.map((g) => g.session.session_id)).toContain('sess-x');
+    expect((await searchEvents(db, { q: 'zzcompressed' })).results.map((g) => g.session.session_id)).toContain('sess-x');
   });
 
   it('re-detects a session whose mtime advanced', () => {

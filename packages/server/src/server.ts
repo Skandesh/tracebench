@@ -17,7 +17,7 @@ import {
 import { defaultCursorUserDataDir } from '@tracebench/adapter-cursor';
 import type { Harness, TracebenchDb } from '@tracebench/core';
 import { defaultDbPath } from './paths.js';
-import { registerRoutes } from './routes.js';
+import { registerRoutes, type RouteContext } from './routes.js';
 import { indexSessions } from './indexer.js';
 
 const DEFAULT_STARTUP_MAX_SESSIONS_PER_HARNESS = 200;
@@ -94,7 +94,15 @@ export async function buildServer(opts: ServerOptions = {}): Promise<BuiltServer
   const cursorUserDir = opts.cursorUserDataDir ?? defaultCursorUserDataDir();
   const cursorGlobalDbPath = join(cursorUserDir, 'globalStorage', 'state.vscdb');
 
-  await registerRoutes(app, { db, dbPath, roots, cursorGlobalDbPath });
+  const ctx: RouteContext = {
+    db,
+    dbPath,
+    roots,
+    cursorGlobalDbPath,
+    embedder: null,
+    maxVectorChunks: opts.maxVectorChunks,
+  };
+  await registerRoutes(app, ctx);
 
   // Static UI: if a built UI exists, serve it. Otherwise a friendly fallback
   // page that explains how to start the dev UI.
@@ -145,7 +153,7 @@ export async function buildServer(opts: ServerOptions = {}): Promise<BuiltServer
     // Search background work — strictly AFTER indexing resolves, fire-and-forget
     // so it never blocks readiness: lexical backfill first (brings old sessions
     // into search), then the embedding drain when vectors are enabled.
-    void runSearchBackground(db, opts.verbose, opts.maxVectorChunks);
+    void runSearchBackground(ctx, opts.verbose);
   }
 
   return { app, db };
@@ -158,11 +166,9 @@ export async function buildServer(opts: ServerOptions = {}): Promise<BuiltServer
  * requests responsive (RISK11/S1). All best-effort — failures degrade to
  * lexical-only and never crash the server.
  */
-async function runSearchBackground(
-  db: TracebenchDb,
-  verbose?: boolean,
-  maxVectorChunks?: number,
-): Promise<void> {
+async function runSearchBackground(ctx: RouteContext, verbose?: boolean): Promise<void> {
+  const { db } = ctx;
+  const maxVectorChunks = ctx.maxVectorChunks;
   const log = (msg: string) => verbose && process.stderr.write(`[tracebench] ${msg}\n`);
   // 1) Lexical backfill.
   try {
@@ -193,6 +199,9 @@ async function runSearchBackground(
       log('embeddings: model unavailable — semantic search disabled (lexical-only)');
       return;
     }
+    // Publish to the route context so /api/search can embed queries (the
+    // semantic leg goes live as soon as some vectors exist, even mid-drain).
+    ctx.embedder = embedder;
     setVecMeta(db, 'model_id', embedder.modelId);
     setVecMeta(db, 'dtype', embedder.dtype);
     setVecMeta(db, 'chunker_version', String(CHUNKER_VERSION));

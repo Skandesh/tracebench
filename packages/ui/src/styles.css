@@ -284,10 +284,13 @@ kbd {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex: 0 0 auto;            /* never shrink — the row scrolls instead of wrapping */
+  white-space: nowrap;       /* keep "Claude Code" + count on one line */
   color: var(--text-mute);
   font: inherit;
   font-size: 11.5px;
   font-weight: 500;
+  line-height: 1;
   border-radius: 4px;
   cursor: pointer;
 }
@@ -299,6 +302,7 @@ kbd {
 .tb-harness-count {
   font-family: 'Geist Mono', ui-monospace, monospace;
   font-size: 10px;
+  font-variant-numeric: tabular-nums;
   color: var(--text-faint);
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "tracebench",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "type": "module",
   "description": "Local-first viewer for AI coding agent sessions. Reads Claude Code, Codex, and Cursor.",
   "keywords": [

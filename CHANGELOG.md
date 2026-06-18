@@ -5,6 +5,8 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
 > **How releases work:** edit `[Unreleased]` below as you work. Running `pnpm release <version> --skip-publish` (see `scripts/release.mjs`) promotes it to a dated `[X.Y.Z]` section, bumps all package versions, commits, tags, and pushes.
 
 ## [Unreleased]
+
+## [0.4.0] — 2026-06-18
 ### Added
 - **Cross-harness search** — find threads by *what was said and done inside them* (message content, thinking, tool inputs/outputs, error text), across all four harnesses, ranked by relevance with highlighted snippets and click-to-jump. New `/api/search` endpoint and a dedicated search surface (type in the filter box and press **Enter**; `Esc` exits). Each result offers a **resume affordance** — the harness-native resume command (`claude --resume <id>`, `codex resume <id>`, …) to copy.
   - **Lexical (default, zero new dependencies):** a dual SQLite **FTS5** index — a `trigram` leg for exact substring/code/path/error matching plus a `porter` leg for ranked natural-language relevance — populated at index time, with a one-time background backfill so existing databases gain search automatically. Query input is sanitized so FTS operator characters never break a search.

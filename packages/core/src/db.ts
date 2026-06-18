@@ -30,6 +30,19 @@ export interface OpenDbOptions {
 
 export interface TracebenchDb {
   raw: DB;
+  /**
+   * Whether the FTS5 lexical search tables (fts_words/fts_tri) were created and
+   * passed the contentless_delete capability probe. When false, search degrades
+   * to unavailable rather than bricking startup (see ensureSearchFts).
+   */
+  ftsAvailable: boolean;
+  /**
+   * Whether the sqlite-vec extension loaded and the vec_chunks table is usable.
+   * Wired by the semantic leg (U7); false until then. All vector reads AND
+   * writes are gated on this flag — the table existing is not the same as the
+   * extension being loaded.
+   */
+  vectorsAvailable: boolean;
   close(): void;
 }
 
@@ -244,6 +257,54 @@ const MIGRATIONS: { version: number; name: string; sql: string }[] = [
       );
     `,
   },
+  {
+    version: 6,
+    name: 'search_index_lexical',
+    // Plain tables only. The FTS5 virtual tables (fts_words/fts_tri) are created
+    // separately in ensureSearchFts() with a capability probe, because the
+    // trigram tokenizer + contentless_delete carry a (small, in practice) SQLite
+    // version risk and we degrade rather than brick the migration on failure.
+    sql: `
+      CREATE TABLE search_chunks (
+        chunk_id     INTEGER PRIMARY KEY,   -- supplied: hash(event_id, chunk_seq), never autoincrement
+        event_id     TEXT NOT NULL,
+        session_id   TEXT NOT NULL,
+        turn_id      TEXT,
+        harness      TEXT NOT NULL,
+        chunk_seq    INTEGER NOT NULL,      -- ordinal of the chunk within its event (NOT events.seq)
+        text         TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        embed_state  TEXT NOT NULL DEFAULT 'vector-pending'  -- 'vector-pending' | 'embedded'
+      );
+
+      CREATE INDEX search_chunks_by_session ON search_chunks(session_id);
+      CREATE INDEX search_chunks_by_event   ON search_chunks(event_id);
+      CREATE INDEX search_chunks_by_embed   ON search_chunks(embed_state);
+
+      CREATE TABLE staged_search_chunks (
+        index_run_id TEXT NOT NULL REFERENCES index_runs(index_run_id) ON DELETE CASCADE,
+        chunk_id     INTEGER NOT NULL,
+        event_id     TEXT NOT NULL,
+        session_id   TEXT NOT NULL,
+        turn_id      TEXT,
+        harness      TEXT NOT NULL,
+        chunk_seq    INTEGER NOT NULL,
+        text         TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        embed_state  TEXT NOT NULL DEFAULT 'vector-pending',
+        PRIMARY KEY (index_run_id, chunk_id)
+      );
+
+      CREATE INDEX staged_search_chunks_by_run ON staged_search_chunks(index_run_id);
+
+      -- Positive, atomic detection marker for the lexical upgrade backfill (U6).
+      CREATE TABLE search_backfill_state (
+        session_id   TEXT PRIMARY KEY,
+        mtime_ms     INTEGER NOT NULL,
+        lexical_done INTEGER NOT NULL DEFAULT 0
+      );
+    `,
+  },
 ];
 
 function ensureMigrationsTable(db: DB): void {
@@ -276,6 +337,41 @@ function runMigrations(db: DB): void {
   }
 }
 
+/**
+ * Create the FTS5 lexical search tables and verify they actually work, OUTSIDE
+ * the migration system. The trigram tokenizer (SQLite 3.34+) and
+ * contentless_delete=1 (3.43+) are satisfied by the bundled SQLite that
+ * better-sqlite3 11.x ships (3.45+), but the `^` range doesn't contractually
+ * guarantee it — so we probe and DEGRADE (return false) rather than throw,
+ * which would abort openDb and brick startup.
+ */
+function ensureSearchFts(db: DB): boolean {
+  try {
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS fts_words USING fts5(
+        text, content='', contentless_delete=1,
+        tokenize='porter unicode61 remove_diacritics 2'
+      );
+      CREATE VIRTUAL TABLE IF NOT EXISTS fts_tri USING fts5(
+        text, content='', contentless_delete=1,
+        tokenize='trigram'
+      );
+    `);
+    // Capability probe: contentless_delete must genuinely delete, not no-op.
+    const probeRowid = -424242;
+    const probeTerm = 'tracebenchftsprobe';
+    db.prepare('INSERT INTO fts_words(rowid, text) VALUES (?, ?)').run(probeRowid, probeTerm);
+    db.prepare('DELETE FROM fts_words WHERE rowid = ?').run(probeRowid);
+    const stillThere = db
+      .prepare('SELECT rowid FROM fts_words WHERE fts_words MATCH ?')
+      .get(probeTerm);
+    return stillThere == null;
+  } catch {
+    // FTS5 / trigram / contentless_delete unsupported on this SQLite build.
+    return false;
+  }
+}
+
 export function openDb(opts: OpenDbOptions): TracebenchDb {
   if (opts.path !== ':memory:') {
     mkdirSync(dirname(opts.path), { recursive: true });
@@ -284,11 +380,17 @@ export function openDb(opts: OpenDbOptions): TracebenchDb {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.pragma('synchronous = NORMAL');
+  // Groundwork for multi-process safety (RISK16); U7 adds the single-instance guard.
+  db.pragma('busy_timeout = 5000');
   if (!opts.skipMigrations) runMigrations(db);
-  return {
+  const handle: TracebenchDb = {
     raw: db,
+    ftsAvailable: false,
+    vectorsAvailable: false,
     close: () => db.close(),
   };
+  if (!opts.skipMigrations) handle.ftsAvailable = ensureSearchFts(db);
+  return handle;
 }
 
 // ── Session writes ──────────────────────────────────────────────────────────
@@ -374,6 +476,7 @@ export function upsertSession(
 }
 
 export function deleteSessionEvents(db: TracebenchDb, sessionId: string): void {
+  deleteSessionSearchChunks(db, sessionId);
   db.raw.prepare('DELETE FROM events WHERE session_id = ?').run(sessionId);
   db.raw
     .prepare('DELETE FROM context_snapshots WHERE session_id = ?')
@@ -387,6 +490,108 @@ export function deleteSessionEvents(db: TracebenchDb, sessionId: string): void {
        )`,
     )
     .run();
+}
+
+// ── Search chunks (lexical FTS index source) ────────────────────────────────
+
+/** One searchable chunk. `chunk_id` is deterministic — see chunkIdFor. */
+export interface SearchChunkRow {
+  chunk_id: number;
+  event_id: string;
+  session_id: string;
+  turn_id: string | null;
+  harness: string;
+  chunk_seq: number;
+  text: string;
+  content_hash: string;
+  embed_state?: string;
+}
+
+/**
+ * Deterministic, pre-assigned chunk_id = a 52-bit truncation of
+ * SHA-256(event_id, chunk_seq). Stable across re-index (same event/chunk →
+ * same id), so FTS rowids and vec_chunks.chunk_id stay aligned. 52 bits fits a
+ * JS safe integer; collision probability is negligible at expected corpus sizes
+ * and an INSERT OR IGNORE makes any collision a (logged) dropped chunk, not
+ * corruption. `chunk_seq` is the ordinal WITHIN the event's split — never
+ * events.seq.
+ */
+export function chunkIdFor(eventId: string, chunkSeq: number): number {
+  const h = createHash('sha256').update(eventId).update('\0').update(String(chunkSeq)).digest();
+  const hi = h.readUInt32BE(0);
+  const lo = h.readUInt32BE(4);
+  const top20 = hi & 0xfffff; // low 20 bits of the high word
+  return top20 * 0x1_0000_0000 + lo; // 52-bit value, always in [0, 2^52)
+}
+
+/**
+ * Delete a session's search chunks consistently. Rowid-first ordering:
+ * contentless FTS5 rows can only be deleted by a rowid known in advance, so
+ * read chunk_ids from search_chunks FIRST, delete FTS (and vectors, when the
+ * extension is loaded) by rowid, then delete search_chunks LAST. Reversing this
+ * orphans FTS/vector rows into permanent stale hits.
+ */
+export function deleteSessionSearchChunks(db: TracebenchDb, sessionId: string): void {
+  const ids = (
+    db.raw.prepare('SELECT chunk_id FROM search_chunks WHERE session_id = ?').all(sessionId) as {
+      chunk_id: number;
+    }[]
+  ).map((r) => r.chunk_id);
+  if (ids.length) {
+    if (db.ftsAvailable) {
+      const delW = db.raw.prepare('DELETE FROM fts_words WHERE rowid = ?');
+      const delT = db.raw.prepare('DELETE FROM fts_tri WHERE rowid = ?');
+      for (const id of ids) {
+        delW.run(id);
+        delT.run(id);
+      }
+    }
+    if (db.vectorsAvailable) {
+      const delV = db.raw.prepare('DELETE FROM vec_chunks WHERE chunk_id = ?');
+      for (const id of ids) delV.run(id);
+    }
+  }
+  db.raw.prepare('DELETE FROM search_chunks WHERE session_id = ?').run(sessionId);
+}
+
+/** Insert one chunk into search_chunks and (when available) both FTS tables. */
+export function insertSearchChunk(db: TracebenchDb, c: SearchChunkRow): void {
+  const info = db.raw
+    .prepare(
+      `INSERT OR IGNORE INTO search_chunks
+         (chunk_id, event_id, session_id, turn_id, harness, chunk_seq, text, content_hash, embed_state)
+       VALUES (@chunk_id, @event_id, @session_id, @turn_id, @harness, @chunk_seq, @text, @content_hash, @embed_state)`,
+    )
+    .run({ ...c, turn_id: c.turn_id ?? null, embed_state: c.embed_state ?? 'vector-pending' });
+  if (info.changes > 0 && db.ftsAvailable) {
+    db.raw.prepare('INSERT INTO fts_words(rowid, text) VALUES (?, ?)').run(c.chunk_id, c.text);
+    db.raw.prepare('INSERT INTO fts_tri(rowid, text) VALUES (?, ?)').run(c.chunk_id, c.text);
+  }
+}
+
+/** Stage chunks for a not-yet-published index run (mirrors stageEvents). */
+export function stageSearchChunks(
+  db: TracebenchDb,
+  indexRunId: string,
+  chunks: SearchChunkRow[],
+): void {
+  if (chunks.length === 0) return;
+  const stmt = db.raw.prepare(
+    `INSERT OR IGNORE INTO staged_search_chunks
+       (index_run_id, chunk_id, event_id, session_id, turn_id, harness, chunk_seq, text, content_hash, embed_state)
+     VALUES (@index_run_id, @chunk_id, @event_id, @session_id, @turn_id, @harness, @chunk_seq, @text, @content_hash, @embed_state)`,
+  );
+  const tx = db.raw.transaction((batch: SearchChunkRow[]) => {
+    for (const c of batch) {
+      stmt.run({
+        ...c,
+        index_run_id: indexRunId,
+        turn_id: c.turn_id ?? null,
+        embed_state: c.embed_state ?? 'vector-pending',
+      });
+    }
+  });
+  tx(chunks);
 }
 
 // ── Discovered session manifest ─────────────────────────────────────────────
@@ -551,6 +756,9 @@ function cleanupStagedRows(db: TracebenchDb, indexRunId: string): void {
   db.raw.prepare('DELETE FROM staged_event_payload_refs WHERE index_run_id = ?').run(indexRunId);
   db.raw.prepare('DELETE FROM staged_events WHERE index_run_id = ?').run(indexRunId);
   db.raw.prepare('DELETE FROM staged_sessions WHERE index_run_id = ?').run(indexRunId);
+  // Staged chunks never reached FTS, so this is a plain delete-by-run — distinct
+  // from the rowid-first session purge in deleteSessionSearchChunks.
+  db.raw.prepare('DELETE FROM staged_search_chunks WHERE index_run_id = ?').run(indexRunId);
   db.raw
     .prepare(
       `DELETE FROM event_payloads
@@ -972,6 +1180,32 @@ export function publishIndexRun(
            )`,
       )
       .run(indexRunId, session.session_id);
+    // Search chunks (lexical). U2 stages chunks during the index pass; here we
+    // publish them into search_chunks and feed both FTS tables — all inside the
+    // same atomic transaction as events, so the index never goes half-written.
+    db.raw
+      .prepare(
+        `INSERT OR IGNORE INTO search_chunks
+           (chunk_id, event_id, session_id, turn_id, harness, chunk_seq, text, content_hash, embed_state)
+         SELECT chunk_id, event_id, session_id, turn_id, harness, chunk_seq, text, content_hash, embed_state
+         FROM staged_search_chunks
+         WHERE index_run_id = ?`,
+      )
+      .run(indexRunId);
+    if (db.ftsAvailable) {
+      db.raw
+        .prepare(
+          `INSERT INTO fts_words(rowid, text)
+           SELECT chunk_id, text FROM staged_search_chunks WHERE index_run_id = ?`,
+        )
+        .run(indexRunId);
+      db.raw
+        .prepare(
+          `INSERT INTO fts_tri(rowid, text)
+           SELECT chunk_id, text FROM staged_search_chunks WHERE index_run_id = ?`,
+        )
+        .run(indexRunId);
+    }
     markDiscoveredSessionIndexed(db, input.harness, input.rawPath, input.state ?? 'hot');
     db.raw
       .prepare(

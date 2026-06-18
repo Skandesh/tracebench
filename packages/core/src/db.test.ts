@@ -16,6 +16,11 @@ import {
   publishIndexRun,
   stageEvents,
   stageSession,
+  insertSearchChunk,
+  stageSearchChunks,
+  deleteSessionSearchChunks,
+  chunkIdFor,
+  type SearchChunkRow,
   type TracebenchDb,
 } from './db.js';
 import type { CanonicalEvent, Session, ContextSnapshot } from './schema.js';
@@ -504,5 +509,126 @@ describe('cascade delete', () => {
     expect(getSessionEvents(db, 'sess-1').length).toBe(2);
     deleteSessionEvents(db, 'sess-1');
     expect(getSessionEvents(db, 'sess-1').length).toBe(0);
+  });
+});
+
+function makeChunk(overrides: Partial<SearchChunkRow> = {}): SearchChunkRow {
+  const event_id = overrides.event_id ?? 'evt-1';
+  const chunk_seq = overrides.chunk_seq ?? 0;
+  return {
+    chunk_id: chunkIdFor(event_id, chunk_seq),
+    event_id,
+    session_id: 'sess-1',
+    turn_id: 'turn-1',
+    harness: 'claude_code',
+    chunk_seq,
+    text: 'the quick brown fox useMemo packages/core/src/db.ts',
+    content_hash: 'h1',
+    ...overrides,
+  };
+}
+
+describe('search index schema (U1)', () => {
+  it('creates v6 tables and FTS is available', () => {
+    const names = (
+      db.raw
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+        .all() as { name: string }[]
+    ).map((t) => t.name);
+    expect(names).toContain('search_chunks');
+    expect(names).toContain('staged_search_chunks');
+    expect(names).toContain('search_backfill_state');
+    expect(db.ftsAvailable).toBe(true);
+    const fts = (
+      db.raw
+        .prepare("SELECT name FROM sqlite_master WHERE name IN ('fts_words','fts_tri')")
+        .all() as { name: string }[]
+    ).map((f) => f.name);
+    expect(fts.sort()).toEqual(['fts_tri', 'fts_words']);
+  });
+
+  it('chunkIdFor is deterministic, distinct per chunk_seq, and a safe integer', () => {
+    expect(chunkIdFor('evt-1', 0)).toBe(chunkIdFor('evt-1', 0));
+    expect(chunkIdFor('evt-1', 0)).not.toBe(chunkIdFor('evt-1', 1));
+    expect(chunkIdFor('evt-1', 0)).not.toBe(chunkIdFor('evt-2', 0));
+    const id = chunkIdFor('evt-1', 0);
+    expect(Number.isSafeInteger(id)).toBe(true);
+    expect(id).toBeGreaterThanOrEqual(0);
+    expect(id).toBeLessThan(2 ** 52);
+  });
+
+  it('insertSearchChunk feeds both FTS tables; contentless_delete is honored', () => {
+    const c = makeChunk();
+    insertSearchChunk(db, c);
+    const wHit = db.raw
+      .prepare("SELECT rowid FROM fts_words WHERE fts_words MATCH 'quick'")
+      .get() as { rowid: number } | undefined;
+    expect(wHit?.rowid).toBe(c.chunk_id);
+    // trigram substring match on a code identifier
+    const tHit = db.raw
+      .prepare("SELECT rowid FROM fts_tri WHERE fts_tri MATCH 'useMemo'")
+      .get() as { rowid: number } | undefined;
+    expect(tHit?.rowid).toBe(c.chunk_id);
+    db.raw.prepare('DELETE FROM fts_words WHERE rowid = ?').run(c.chunk_id);
+    const after = db.raw
+      .prepare("SELECT count(*) n FROM fts_words WHERE fts_words MATCH 'quick'")
+      .get() as { n: number };
+    expect(after.n).toBe(0);
+  });
+
+  it('deleteSessionSearchChunks purges chunks and FTS rows with no orphans', () => {
+    insertSearchChunk(db, makeChunk({ event_id: 'evt-1', chunk_seq: 0 }));
+    insertSearchChunk(db, makeChunk({ event_id: 'evt-2', chunk_seq: 0, text: 'another chunk ENOENT' }));
+    expect((db.raw.prepare('SELECT count(*) n FROM search_chunks').get() as { n: number }).n).toBe(2);
+    deleteSessionSearchChunks(db, 'sess-1');
+    expect((db.raw.prepare('SELECT count(*) n FROM search_chunks').get() as { n: number }).n).toBe(0);
+    const orphan = db.raw
+      .prepare("SELECT count(*) n FROM fts_words WHERE fts_words MATCH 'chunk OR quick'")
+      .get() as { n: number };
+    expect(orphan.n).toBe(0);
+  });
+
+  it('publishIndexRun populates search_chunks + FTS from staged chunks; re-publish is stable', () => {
+    const session = makeSession();
+    const run1 = beginIndexRun(db, {
+      harness: 'claude_code',
+      session_id: session.session_id,
+      raw_path: session.raw_path,
+    });
+    stageSession(db, run1, session, {});
+    stageSearchChunks(db, run1, [makeChunk({ text: 'searchable body text alpha' })]);
+    publishIndexRun(db, run1, { harness: 'claude_code', rawPath: session.raw_path });
+    expect(
+      (
+        db.raw
+          .prepare('SELECT count(*) n FROM search_chunks WHERE session_id = ?')
+          .get(session.session_id) as { n: number }
+      ).n,
+    ).toBe(1);
+    const hit = db.raw
+      .prepare("SELECT rowid FROM fts_words WHERE fts_words MATCH 'alpha'")
+      .get() as { rowid: number } | undefined;
+    expect(hit?.rowid).toBe(chunkIdFor('evt-1', 0));
+
+    const run2 = beginIndexRun(db, {
+      harness: 'claude_code',
+      session_id: session.session_id,
+      raw_path: session.raw_path,
+    });
+    stageSession(db, run2, session, {});
+    stageSearchChunks(db, run2, [makeChunk({ text: 'searchable body text alpha' })]);
+    publishIndexRun(db, run2, { harness: 'claude_code', rawPath: session.raw_path });
+    expect(
+      (
+        db.raw
+          .prepare('SELECT count(*) n FROM search_chunks WHERE session_id = ?')
+          .get(session.session_id) as { n: number }
+      ).n,
+    ).toBe(1);
+    expect(
+      (db.raw.prepare("SELECT count(*) n FROM fts_words WHERE fts_words MATCH 'alpha'").get() as {
+        n: number;
+      }).n,
+    ).toBe(1);
   });
 });

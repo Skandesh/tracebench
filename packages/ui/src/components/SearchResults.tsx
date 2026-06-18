@@ -31,14 +31,20 @@ export function SearchResults({ query, harness, onOpenResult }: Props) {
       return;
     }
     let cancelled = false;
+    let slowTimer: ReturnType<typeof setTimeout> | undefined;
     setLoading(true);
     setError(null);
-    const slowTimer = setTimeout(() => !cancelled && setSlow(true), SLOW_MS);
+    setSlow(false);
     const debounce = setTimeout(() => {
+      // The "slow" timer tracks the in-flight request only — start it when the
+      // request fires and clear it the moment it resolves, so it can't fire
+      // spuriously ~2s after a query has already completed.
+      slowTimer = setTimeout(() => !cancelled && setSlow(true), SLOW_MS);
       searchEvents({ q, harness })
         .then((r) => !cancelled && setData(r)) // retain prior results until the new ones land
         .catch((e) => !cancelled && setError(e instanceof Error ? e.message : String(e)))
         .finally(() => {
+          clearTimeout(slowTimer);
           if (cancelled) return;
           setLoading(false);
           setSlow(false);

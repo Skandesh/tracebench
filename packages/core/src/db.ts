@@ -8,6 +8,7 @@
 //   a migration.
 
 import Database, { type Database as DB } from 'better-sqlite3';
+import { createRequire } from 'node:module';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -26,7 +27,17 @@ export interface OpenDbOptions {
   path: string;
   /** Skip migrations (advanced; for tests only). */
   skipMigrations?: boolean;
+  /**
+   * Opt in to the semantic leg: load the sqlite-vec extension and create
+   * vec_chunks. Off by default (KTD7) — the CLI sets it from `--embeddings`.
+   * If the optional dependency or platform binary is missing, this degrades to
+   * lexical-only rather than failing.
+   */
+  enableVectors?: boolean;
 }
+
+/** Embedding dimension for the vector store (must match the embed model). */
+export const EMBEDDING_DIM = 384;
 
 export interface TracebenchDb {
   raw: DB;
@@ -372,6 +383,91 @@ function ensureSearchFts(db: DB): boolean {
   }
 }
 
+const nodeRequire = createRequire(import.meta.url);
+
+/**
+ * Load the optional sqlite-vec extension. Returns false (degrade to lexical) if
+ * the optional dependency or platform binary is missing, or loadExtension is
+ * disabled — never throws. Must run before any vec_chunks access.
+ */
+function loadVectorExtension(db: DB): boolean {
+  try {
+    const vec = nodeRequire('sqlite-vec') as { load: (d: DB) => void };
+    vec.load(db);
+    db.prepare('SELECT vec_version()').get();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Create the vec_chunks table (conditionally — it can't be an unconditional
+ * migration because the extension may be absent) and the vec_meta versioning
+ * table. Returns false on any failure.
+ */
+function ensureVecChunks(db: DB): boolean {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS vec_meta (key TEXT PRIMARY KEY, value TEXT);
+      CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
+        chunk_id  INTEGER PRIMARY KEY,
+        embedding float[${EMBEDDING_DIM}],
+        harness   TEXT
+      );
+    `);
+    db.prepare(
+      `INSERT INTO vec_meta(key, value) VALUES ('embedding_dim', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    ).run(String(EMBEDDING_DIM));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Read a vec_meta value (model_id / chunker_version / embedding_dim). */
+export function getVecMeta(db: TracebenchDb, key: string): string | null {
+  if (!db.vectorsAvailable) return null;
+  const row = db.raw.prepare('SELECT value FROM vec_meta WHERE key = ?').get(key) as
+    | { value: string }
+    | undefined;
+  return row?.value ?? null;
+}
+
+/** Write a vec_meta value. No-op when vectors are unavailable. */
+export function setVecMeta(db: TracebenchDb, key: string, value: string): void {
+  if (!db.vectorsAvailable) return;
+  db.raw
+    .prepare(
+      `INSERT INTO vec_meta(key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    )
+    .run(key, value);
+}
+
+/** Insert/replace a chunk's embedding. chunk_id is bound as BigInt (vec0 PK). */
+export function insertVector(
+  db: TracebenchDb,
+  chunkId: number,
+  harness: string,
+  vector: Float32Array | number[],
+): void {
+  if (!db.vectorsAvailable) return;
+  const buf = Buffer.from(Float32Array.from(vector).buffer);
+  const id = BigInt(chunkId);
+  db.raw.prepare('DELETE FROM vec_chunks WHERE chunk_id = ?').run(id);
+  db.raw
+    .prepare('INSERT INTO vec_chunks(chunk_id, embedding, harness) VALUES (?, ?, ?)')
+    .run(id, buf, harness);
+}
+
+/** Total stored vectors (for the maxVectorChunks budget). */
+export function countVectors(db: TracebenchDb): number {
+  if (!db.vectorsAvailable) return 0;
+  return (db.raw.prepare('SELECT count(*) AS n FROM vec_chunks').get() as { n: number }).n;
+}
+
 export function openDb(opts: OpenDbOptions): TracebenchDb {
   if (opts.path !== ':memory:') {
     mkdirSync(dirname(opts.path), { recursive: true });
@@ -380,16 +476,25 @@ export function openDb(opts: OpenDbOptions): TracebenchDb {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.pragma('synchronous = NORMAL');
-  // Groundwork for multi-process safety (RISK16); U7 adds the single-instance guard.
+  // Bounds contention if a second process opens the same DB (RISK16); the CLI
+  // adds the single-instance guard on top.
   db.pragma('busy_timeout = 5000');
-  if (!opts.skipMigrations) runMigrations(db);
+  // Load the vector extension BEFORE schema access so a DB that already contains
+  // a vec_chunks vtable can still be opened (RISK12).
   const handle: TracebenchDb = {
     raw: db,
     ftsAvailable: false,
     vectorsAvailable: false,
     close: () => db.close(),
   };
+  if (opts.enableVectors && loadVectorExtension(db)) {
+    handle.vectorsAvailable = true;
+  }
+  if (!opts.skipMigrations) runMigrations(db);
   if (!opts.skipMigrations) handle.ftsAvailable = ensureSearchFts(db);
+  if (handle.vectorsAvailable && !opts.skipMigrations) {
+    handle.vectorsAvailable = ensureVecChunks(db);
+  }
   return handle;
 }
 
@@ -548,7 +653,7 @@ export function deleteSessionSearchChunks(db: TracebenchDb, sessionId: string): 
     }
     if (db.vectorsAvailable) {
       const delV = db.raw.prepare('DELETE FROM vec_chunks WHERE chunk_id = ?');
-      for (const id of ids) delV.run(id);
+      for (const id of ids) delV.run(BigInt(id)); // vec0 PK is bound as BigInt
     }
   }
   db.raw.prepare('DELETE FROM search_chunks WHERE session_id = ?').run(sessionId);

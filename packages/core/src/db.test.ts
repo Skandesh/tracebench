@@ -20,6 +20,11 @@ import {
   stageSearchChunks,
   deleteSessionSearchChunks,
   chunkIdFor,
+  EMBEDDING_DIM,
+  insertVector,
+  countVectors,
+  getVecMeta,
+  setVecMeta,
   type SearchChunkRow,
   type TracebenchDb,
 } from './db.js';
@@ -630,5 +635,59 @@ describe('search index schema (U1)', () => {
         n: number;
       }).n,
     ).toBe(1);
+  });
+});
+
+function vec384(prefix: number[]): number[] {
+  const v = new Array(EMBEDDING_DIM).fill(0);
+  for (let i = 0; i < prefix.length && i < EMBEDDING_DIM; i++) v[i] = prefix[i];
+  return v;
+}
+
+describe('vector store (U7)', () => {
+  it('does not create vec_chunks unless vectors are enabled; vec ops are safe no-ops', () => {
+    expect(db.vectorsAvailable).toBe(false);
+    expect(db.raw.prepare("SELECT name FROM sqlite_master WHERE name='vec_chunks'").get()).toBeFalsy();
+    expect(countVectors(db)).toBe(0);
+    expect(() => insertVector(db, 1, 'claude_code', vec384([1]))).not.toThrow();
+    expect(getVecMeta(db, 'embedding_dim')).toBeNull();
+  });
+
+  it('loads the extension and creates vec_chunks + vec_meta when enabled', () => {
+    const vdb = openDb({ path: ':memory:', enableVectors: true });
+    try {
+      expect(vdb.vectorsAvailable).toBe(true);
+      expect(vdb.raw.prepare("SELECT name FROM sqlite_master WHERE name='vec_chunks'").get()).toBeTruthy();
+      expect(getVecMeta(vdb, 'embedding_dim')).toBe(String(EMBEDDING_DIM));
+      setVecMeta(vdb, 'model_id', 'test-model');
+      expect(getVecMeta(vdb, 'model_id')).toBe('test-model');
+    } finally {
+      vdb.close();
+    }
+  });
+
+  it('inserts vectors, answers KNN, and clears them on session purge', () => {
+    const vdb = openDb({ path: ':memory:', enableVectors: true });
+    try {
+      upsertSession(vdb, makeSession({ session_id: 'vs' }));
+      const c = makeChunk({ event_id: 'e', session_id: 'vs', text: 'x' });
+      insertSearchChunk(vdb, c);
+      insertVector(vdb, c.chunk_id, 'claude_code', vec384([1, 0, 0]));
+      const c2 = makeChunk({ event_id: 'e2', session_id: 'vs', text: 'y' });
+      insertSearchChunk(vdb, c2);
+      insertVector(vdb, c2.chunk_id, 'codex', vec384([0, 1, 0]));
+      expect(countVectors(vdb)).toBe(2);
+
+      const buf = Buffer.from(Float32Array.from(vec384([1, 0, 0])).buffer);
+      const rows = vdb.raw
+        .prepare('SELECT chunk_id, distance FROM vec_chunks WHERE embedding MATCH ? AND k = 2 ORDER BY distance')
+        .all(buf) as { chunk_id: number | bigint; distance: number }[];
+      expect(Number(rows[0].chunk_id)).toBe(c.chunk_id);
+
+      deleteSessionSearchChunks(vdb, 'vs');
+      expect(countVectors(vdb)).toBe(0);
+    } finally {
+      vdb.close();
+    }
   });
 });

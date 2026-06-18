@@ -38,6 +38,10 @@ export interface ServerOptions {
   sinceMs?: number;
   only?: Harness[];
   rawMode?: 'full' | 'reference';
+  /** Opt in to the semantic leg (load sqlite-vec + embeddings). Off by default. */
+  enableVectors?: boolean;
+  /** Above this many stored vectors, semantic search auto-degrades to lexical. */
+  maxVectorChunks?: number;
   /** Verbose stderr logging. */
   verbose?: boolean;
 }
@@ -66,7 +70,7 @@ function findUiBuildDir(): string | null {
 
 export async function buildServer(opts: ServerOptions = {}): Promise<BuiltServer> {
   const dbPath = opts.dbPath ?? defaultDbPath();
-  const db = openDb({ path: dbPath });
+  const db = openDb({ path: dbPath, enableVectors: opts.enableVectors });
   const app = Fastify({
     logger: opts.verbose
       ? { level: 'info' }

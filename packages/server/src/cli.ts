@@ -47,6 +47,8 @@ interface CliArgs {
   sinceMs?: number;
   only?: Harness[];
   rawMode: 'full' | 'reference';
+  enableVectors: boolean;
+  maxVectorChunks?: number;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -60,6 +62,7 @@ function parseArgs(argv: string[]): CliArgs {
     doctorStorage: false,
     indexAll: false,
     rawMode: 'reference',
+    enableVectors: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]!;
@@ -85,6 +88,8 @@ function parseArgs(argv: string[]): CliArgs {
       case '--since': a.sinceMs = parseSinceMs(next()); break;
       case '--harness': a.only = parseHarnesses(next()); break;
       case '--preserve-raw': a.rawMode = parseRawMode(next()); break;
+      case '--embeddings': a.enableVectors = true; break;
+      case '--max-vector-chunks': a.maxVectorChunks = parseNonNegativeInt(next(), flag); break;
       case '--no-open': a.open = false; break;
       case '--no-index': a.index = false; break;
       case 'doctor': {
@@ -252,6 +257,8 @@ async function main(): Promise<void> {
     only: args.only,
     rawMode: args.rawMode,
     verbose: args.verbose,
+    enableVectors: args.enableVectors,
+    maxVectorChunks: args.maxVectorChunks,
   });
 
   let port: number;

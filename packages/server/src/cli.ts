@@ -142,6 +142,11 @@ Usage: tracebench [flags]
   --preserve-raw <reference|full>
                       raw storage mode; reference is compact default
   doctor --storage    print non-mutating storage diagnostics and exit
+  --embeddings        enable local semantic search (downloads a ~23MB model;
+                      adds the ONNX runtime; off by default — lexical search
+                      always works without it)
+  --max-vector-chunks <n>
+                      cap stored embeddings; above this, search stays lexical
   --no-open           don't auto-open the browser
   --no-index          skip startup index pass
   -v, --verbose       verbose logging

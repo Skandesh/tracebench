@@ -25,9 +25,10 @@ Tracebench is useful today if you want a local, cross-harness way to inspect AI 
 |---|---|
 | Adapters live | `claude_code`, `codex`, `cursor`, `opencode` |
 | Cursor sources | Agent transcript JSONL plus Composer SQLite (`state.vscdb`) |
-| UI | Vite + React 18 — three-pane layout, tool-aware timeline, spend dashboard, context inspector, analytics rail, harness tabs |
+| Search | Cross-harness search by what was *said/done inside* a thread — SQLite FTS5 (trigram + porter), with an opt-in local-embedding semantic leg (`sqlite-vec`) fused via RRF. Find or resume the thread where you did X. |
+| UI | Vite + React 18 — three-pane layout, tool-aware timeline, cross-session search surface, spend dashboard, context inspector, analytics rail, harness tabs |
 | Backend | Fastify on `127.0.0.1`, SQLite via `better-sqlite3`, multi-adapter incremental indexer |
-| Tests | 143 Vitest cases across 12 test files |
+| Tests | 190 Vitest cases across 17 test files |
 
 For per-release changes see **[CHANGELOG.md](./CHANGELOG.md)**.
 
@@ -59,6 +60,8 @@ On first run it discovers everything under `~/.claude/projects`, `~/.codex/sessi
 | `--harness <names>` | all | only index selected harnesses, comma-separated |
 | `--preserve-raw <reference\|full>` | `reference` | keep raw fidelity by source reference unless full raw copying is requested |
 | `doctor --storage` | — | non-mutating storage report with DB/WAL, source bytes, largest sessions, and payload split |
+| `--embeddings` | — | enable local semantic search (downloads a ~23 MB model + ONNX runtime; off by default — lexical search always works without it) |
+| `--max-vector-chunks <n>` | `150000` | cap stored embeddings; above this the semantic leg auto-degrades to lexical-only |
 | `--no-open` | — | skip browser auto-launch |
 | `--no-index` | — | skip the startup re-index pass |
 | `-v` / `--verbose` | — | verbose stderr logging |
@@ -120,7 +123,8 @@ Large raw payloads are no longer copied into every hot event row by default. Tra
 | Endpoint | Description |
 |---|---|
 | `GET /api/health` | liveness |
-| `GET /api/sessions?harness=&q=&limit=&offset=` | session list with aggregates |
+| `GET /api/sessions?harness=&q=&limit=&offset=` | session list with aggregates (metadata filter) |
+| `GET /api/search?q=&harness=&limit=&offset=` | cross-session body search — sessions ranked by relevance with matching-chunk snippets (`semanticAvailable` reflects the hybrid leg) |
 | `GET /api/sessions/:id` | session + tool counts |
 | `GET /api/sessions/:id/turns` | events grouped into turns |
 | `GET /api/sessions/:id/events` | flat event list, seq order |

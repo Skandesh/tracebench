@@ -18,6 +18,7 @@ import { SessionList } from './components/SessionList';
 import { Timeline } from './components/Timeline';
 import { AnalyticsRail } from './components/AnalyticsRail';
 import { SpendDashboard } from './components/SpendDashboard';
+import { SearchResults } from './components/SearchResults';
 
 interface SessionDetailBundle {
   session: Session;
@@ -58,6 +59,9 @@ export function App() {
   });
   const inspectorJump = useTimelineJump(activeId, timelineRef);
   const { collapsed: sessionsCollapsed, toggle: toggleSessionsPane } = useSessionsPaneCollapsed();
+  // A jump queued by clicking a search result, consumed once the target
+  // session's turns have loaded (the timeline element must exist to scroll to).
+  const pendingJumpRef = useRef<{ sessionId: string; eventId: string } | null>(null);
 
   // One initial fetch of *all* sessions, no harness filter. Filter + search
   // happen in-memory below so switching tabs is instant and tab counts are
@@ -163,6 +167,20 @@ export function App() {
     }
   }, [refresh]);
 
+  // Open a search result: select its session, switch to the timeline, and queue
+  // a jump to the matching event (consumed after detail loads). Separate surface
+  // — the client-side session-list filter (filteredSessions) is untouched.
+  const handleOpenResult = useCallback((sessionId: string, eventId: string) => {
+    pendingJumpRef.current = eventId ? { sessionId, eventId } : null;
+    setActiveId(sessionId);
+    setView('timeline');
+  }, []);
+
+  // Enter in the search box escalates from list-filtering to full-text search.
+  const handleSubmitSearch = useCallback(() => {
+    setView((v) => (search.trim() ? 'search' : v));
+  }, [search]);
+
   // Fetch detail + turns when active session changes
   // In-memory cache: session_id → { session, toolCounts, turns }. Re-visiting
   // a session you've already loaded is instant. Held in a ref so it doesn't
@@ -212,13 +230,25 @@ export function App() {
     return () => { cancelled = true; };
   }, [activeId]);
 
+  // Consume a queued search-result jump once the target session's turns load.
+  useEffect(() => {
+    const pj = pendingJumpRef.current;
+    if (pj && pj.sessionId === activeId && turns.length > 0) {
+      inspectorJump.jumpToEvent(pj.eventId);
+      pendingJumpRef.current = null;
+    }
+  }, [turns, activeId, inspectorJump]);
+
   // Keyboard nav: j/k navigate sessions, / focuses search, Esc blurs input
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName ?? '';
       if (tag === 'INPUT' || tag === 'TEXTAREA') {
-        if (e.key === 'Escape') (target as HTMLInputElement).blur();
+        if (e.key === 'Escape') {
+          (target as HTMLInputElement).blur();
+          if (view === 'search') setView('timeline');
+        }
         return;
       }
       if (e.key === '/') {
@@ -241,7 +271,7 @@ export function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [filteredSessions, activeId]);
+  }, [filteredSessions, activeId, view]);
 
   return (
     <div className="tb-app" data-sessions-collapsed={sessionsCollapsed ? '1' : '0'}>
@@ -253,6 +283,7 @@ export function App() {
         sessions={visibleSessions}
         view={view}
         setView={setView}
+        onSubmitSearch={handleSubmitSearch}
       />
       <StorageStrip
         storage={storage}
@@ -263,6 +294,8 @@ export function App() {
       />
       {view === 'dashboard' ? (
         <SpendDashboard sessions={sessions} onClose={() => setView('timeline')} />
+      ) : view === 'search' ? (
+        <SearchResults query={search} harness={filterHarness} onOpenResult={handleOpenResult} />
       ) : (
         <div className="tb-cols">
           <SessionList

@@ -2,7 +2,7 @@
 // build-time dependency on @tracebench/core types; the API is the contract.
 
 export type Harness = 'claude_code' | 'opencode' | 'codex' | 'cursor';
-export type ViewMode = 'timeline' | 'dashboard';
+export type ViewMode = 'timeline' | 'dashboard' | 'search';
 export type Role = 'user' | 'assistant' | 'system' | 'tool';
 export type EventType =
   | 'message'
@@ -139,6 +139,27 @@ export interface ToolCount {
   tool_name: string;
   count: number;
   errors: number;
+}
+
+// Cross-session search (mirrors the /api/search response shape).
+export interface SearchMatch {
+  chunk_id: number;
+  event_id: string;
+  turn_id: string | null;
+  snippet: string;
+  source: 'lexical' | 'semantic';
+}
+
+export interface SearchResultGroup {
+  session: Session;
+  score: number;
+  matches: SearchMatch[];
+}
+
+export interface SearchEventsResult {
+  results: SearchResultGroup[];
+  total: number;
+  semanticAvailable: boolean;
 }
 
 export interface Turn {

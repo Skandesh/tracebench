@@ -8,6 +8,7 @@ import type {
   CanonicalEvent,
   DiscoveredSession,
   StorageReport,
+  SearchEventsResult,
 } from './types';
 
 async function getJSON<T>(url: string): Promise<T> {
@@ -33,6 +34,22 @@ export function listSessions(params: ListSessionsParams = {}): Promise<{ session
   if (params.offset != null) qs.set('offset', String(params.offset));
   const url = '/api/sessions' + (qs.toString() ? '?' + qs : '');
   return getJSON<{ sessions: Session[] }>(url);
+}
+
+export interface SearchParams {
+  q: string;
+  harness?: Harness | 'all';
+  limit?: number;
+  offset?: number;
+}
+
+export function searchEvents(params: SearchParams): Promise<SearchEventsResult> {
+  const qs = new URLSearchParams();
+  qs.set('q', params.q);
+  if (params.harness && params.harness !== 'all') qs.set('harness', params.harness);
+  if (params.limit != null) qs.set('limit', String(params.limit));
+  if (params.offset != null) qs.set('offset', String(params.offset));
+  return getJSON<SearchEventsResult>('/api/search?' + qs.toString());
 }
 
 export function getSession(id: string): Promise<{ session: Session; tool_counts: ToolCount[] }> {

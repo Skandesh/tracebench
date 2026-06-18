@@ -374,3 +374,53 @@ describe('non-API routes', () => {
     expect(res.headers['content-type']).toMatch(/html/);
   });
 });
+
+describe('GET /api/search', () => {
+  type SearchBody = {
+    results: Array<{ session: { session_id: string; harness: string; title: string | null }; score: number; matches: Array<{ snippet: string }> }>;
+    total: number;
+    semanticAvailable: boolean;
+  };
+
+  it('returns an empty result for an empty query (not 500)', async () => {
+    const res = await server.app.inject({ method: 'GET', url: '/api/search' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ results: [], total: 0, semanticAvailable: false });
+  });
+
+  it('finds a session by content inside its events (README read)', async () => {
+    const res = await server.app.inject({ method: 'GET', url: '/api/search?q=README' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as SearchBody;
+    expect(body.results.length).toBeGreaterThanOrEqual(1);
+    expect(body.results.some((r) => r.session.harness === 'claude_code')).toBe(true);
+    expect(Array.isArray(body.results[0].matches)).toBe(true);
+  });
+
+  it('does not 500 on FTS operator characters', async () => {
+    const res = await server.app.inject({
+      method: 'GET',
+      url: '/api/search?q=' + encodeURIComponent('a + b (c) "x'),
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('restricts results to the requested harness', async () => {
+    const res = await server.app.inject({
+      method: 'GET',
+      url: '/api/search?q=' + encodeURIComponent('the') + '&harness=codex',
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as SearchBody;
+    expect(body.results.every((r) => r.session.harness === 'codex')).toBe(true);
+  });
+
+  it('paginates with limit', async () => {
+    const res = await server.app.inject({
+      method: 'GET',
+      url: '/api/search?q=' + encodeURIComponent('the') + '&limit=1',
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as SearchBody).results.length).toBeLessThanOrEqual(1);
+  });
+});

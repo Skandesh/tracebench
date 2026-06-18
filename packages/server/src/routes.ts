@@ -13,6 +13,7 @@ import {
   getToolCounts,
   listDiscoveredSessions,
   loadPricingTable,
+  searchEvents,
   type Harness,
   type TracebenchDb,
 } from '@tracebench/core';
@@ -52,6 +53,21 @@ export async function registerRoutes(
       offset: req.query.offset ? Number(req.query.offset) : undefined,
     });
     return { sessions };
+  });
+
+  // Cross-session body search (U4). Empty q returns an empty result (not 500).
+  app.get<{
+    Querystring: { q?: string; harness?: string; limit?: string; offset?: string };
+  }>('/api/search', async (req) => {
+    const rawHarness = req.query.harness;
+    const harness =
+      rawHarness && rawHarness !== 'all' ? (rawHarness as Harness) : undefined;
+    return searchEvents(ctx.db, {
+      q: req.query.q ?? '',
+      harness,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+      offset: req.query.offset ? Number(req.query.offset) : undefined,
+    });
   });
 
   app.get<{ Params: { id: string } }>(

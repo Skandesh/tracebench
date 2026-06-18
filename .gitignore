@@ -26,3 +26,8 @@ packages/server/README.md
 packages/server/LICENSE
 packages/server/CHANGELOG.md
 *.tgz
+
+# local tooling + scratch artifacts (machine-local, never committed)
+.compound-engineering/
+.release-notes.tmp.md
+.playwright-mcp/

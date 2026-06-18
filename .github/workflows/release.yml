@@ -47,6 +47,16 @@ jobs:
             packages/adapter-cursor \
             packages/adapter-opencode \
             packages/server; do
-            echo "Publishing ${dir}..."
+            name=$(node -p "require('./$dir/package.json').name")
+            ver=$(node -p "require('./$dir/package.json').version")
+            # Idempotent: skip versions already on npm, so a partial-failure run
+            # is safe to re-run (otherwise it 403s on the already-published ones
+            # and aborts the rest). A package missing its GitHub Actions Trusted
+            # Publisher still 404s on OIDC publish — configure it on npmjs.com.
+            if npm view "$name@$ver" version >/dev/null 2>&1; then
+              echo "Skip $name@$ver (already published)"
+              continue
+            fi
+            echo "Publishing $name@$ver..."
             (cd "$dir" && pnpm publish --access public --no-git-checks --provenance)
           done

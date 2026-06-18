@@ -3,6 +3,8 @@ export * from './db.js';
 export * from './search-chunks.js';
 export * from './search.js';
 export * from './search-backfill.js';
+export * from './embeddings.js';
+export * from './search-embed.js';
 export * from './pricing.js';
 export * from './query.js';
 export * from './aggregate.js';

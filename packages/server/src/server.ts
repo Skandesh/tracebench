@@ -6,7 +6,14 @@ import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openDb, backfillSearchChunks } from '@tracebench/core';
+import {
+  openDb,
+  backfillSearchChunks,
+  createEmbedder,
+  runEmbedDrainBatch,
+  setVecMeta,
+  CHUNKER_VERSION,
+} from '@tracebench/core';
 import { defaultCursorUserDataDir } from '@tracebench/adapter-cursor';
 import type { Harness, TracebenchDb } from '@tracebench/core';
 import { defaultDbPath } from './paths.js';
@@ -135,21 +142,29 @@ export async function buildServer(opts: ServerOptions = {}): Promise<BuiltServer
         `[tracebench] indexed ${result.indexed} / ${result.scanned} sessions (${perHarness}; ${result.skipped} unchanged, ${result.deferred} deferred, ${result.errors.length} errors) in ${result.duration_ms}ms\n`,
       );
     }
-    // Lexical search backfill — strictly AFTER indexing resolves, fire-and-forget
-    // so it never blocks readiness. Brings sessions that predate the search index
-    // (or were indexed before this version) into search without a manual reindex.
-    void runLexicalBackfill(db, opts.verbose);
+    // Search background work — strictly AFTER indexing resolves, fire-and-forget
+    // so it never blocks readiness: lexical backfill first (brings old sessions
+    // into search), then the embedding drain when vectors are enabled.
+    void runSearchBackground(db, opts.verbose, opts.maxVectorChunks);
   }
 
   return { app, db };
 }
 
 /**
- * Bounded background loop draining the lexical search backfill. Each batch is a
- * set of per-session atomic transactions; we checkpoint WAL and yield between
- * batches so foreground requests stay responsive (RISK11/S1).
+ * Background pipeline: drain the lexical backfill to completion, then (when the
+ * semantic leg is enabled) acquire the local embedder and drain pending
+ * embeddings. Bounded batches with WAL checkpoints + yields keep foreground
+ * requests responsive (RISK11/S1). All best-effort — failures degrade to
+ * lexical-only and never crash the server.
  */
-async function runLexicalBackfill(db: TracebenchDb, verbose?: boolean): Promise<void> {
+async function runSearchBackground(
+  db: TracebenchDb,
+  verbose?: boolean,
+  maxVectorChunks?: number,
+): Promise<void> {
+  const log = (msg: string) => verbose && process.stderr.write(`[tracebench] ${msg}\n`);
+  // 1) Lexical backfill.
   try {
     let total = 0;
     for (;;) {
@@ -159,21 +174,52 @@ async function runLexicalBackfill(db: TracebenchDb, verbose?: boolean): Promise<
         try {
           db.raw.pragma('wal_checkpoint(TRUNCATE)');
         } catch {
-          /* checkpoint is best-effort */
+          /* best-effort */
         }
       }
       if (processed === 0 || remaining === 0) break;
       await new Promise((r) => setImmediate(r));
     }
-    if (verbose && total > 0) {
-      process.stderr.write(`[tracebench] search backfill: indexed ${total} session(s)\n`);
-    }
+    if (total > 0) log(`search backfill: indexed ${total} session(s)`);
   } catch (e) {
-    if (verbose) {
-      process.stderr.write(
-        `[tracebench] search backfill error: ${e instanceof Error ? e.message : String(e)}\n`,
-      );
+    log(`search backfill error: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // 2) Embedding drain (only when the semantic leg loaded).
+  if (!db.vectorsAvailable) return;
+  try {
+    const embedder = await createEmbedder();
+    if (!embedder) {
+      log('embeddings: model unavailable — semantic search disabled (lexical-only)');
+      return;
     }
+    setVecMeta(db, 'model_id', embedder.modelId);
+    setVecMeta(db, 'dtype', embedder.dtype);
+    setVecMeta(db, 'chunker_version', String(CHUNKER_VERSION));
+    let total = 0;
+    for (;;) {
+      const { processed, remaining, budgetReached } = await runEmbedDrainBatch(db, embedder.embed, {
+        limit: 32,
+        maxVectorChunks,
+      });
+      total += processed;
+      if (processed > 0) {
+        try {
+          db.raw.pragma('wal_checkpoint(TRUNCATE)');
+        } catch {
+          /* best-effort */
+        }
+      }
+      if (budgetReached) {
+        log('embeddings: vector budget reached — remaining chunks stay lexical-only');
+        break;
+      }
+      if (processed === 0 || remaining === 0) break;
+      await new Promise((r) => setImmediate(r));
+    }
+    if (total > 0) log(`embeddings: embedded ${total} chunk(s)`);
+  } catch (e) {
+    log(`embeddings error: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 

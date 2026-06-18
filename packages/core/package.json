@@ -62,7 +62,8 @@
     "better-sqlite3": "^11.1.2"
   },
   "optionalDependencies": {
-    "sqlite-vec": "0.1.9"
+    "sqlite-vec": "0.1.9",
+    "@huggingface/transformers": "^3.0.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.11"

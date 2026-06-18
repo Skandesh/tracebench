@@ -15,6 +15,11 @@ import type { CanonicalEvent } from './schema.js';
 export const MAX_CHUNK_CHARS = 1000;
 export const CHUNK_OVERLAP_CHARS = 150;
 
+// Bump when chunking logic changes (sizing, overlap, prefixing, serialization).
+// Recorded in vec_meta so a change can trigger a rebuild rather than leaving
+// stale chunks/embeddings on unchanged sessions (KTD12 / RISK18).
+export const CHUNKER_VERSION = 1;
+
 function sha256(text: string): string {
   return createHash('sha256').update(text).digest('hex');
 }

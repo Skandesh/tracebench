@@ -11,6 +11,9 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
   - **Semantic (opt-in via `--embeddings`):** local embeddings (`@huggingface/transformers`, all-MiniLM-L6-v2) stored in `sqlite-vec`, fused with the lexical results via Reciprocal Rank Fusion so paraphrased queries ("how did we fix the auth bug") surface the right thread. Runs fully local; degrades cleanly to lexical-only where the optional native dependency, platform binary, or model is unavailable. `--max-vector-chunks` bounds the vector budget.
   - **Note:** enabling `--embeddings` adds an ONNX runtime and downloads a ~23 MB model on first use, and the search index grows the database (trigram index + chunk text); semantic search is off by default to keep the lean `npx tracebench` experience intact.
 
+### Changed
+- **Bounded startup indexing + large-session safety** — startup indexes a bounded, fresh working set instead of every historical session, and very large JSONL sessions / explicit backfills are handled without unsafe whole-session materialization. Staged stage-then-publish indexing keeps visible sessions intact if a run fails, and raw fidelity (turns, tool links, tokens, provenance) is preserved via source refs + externalized payloads.
+
 ## [0.3.1] — 2026-06-05
 ### Added
 - **Context pressure indicator** — 80% window threshold marker, fill-ratio sparkline with active turn, and elevated/critical banners when reconstructed context nears the model limit.

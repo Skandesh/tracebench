@@ -214,7 +214,7 @@ async function main(): Promise<void> {
         readonly: true,
         fileMustExist: true,
       });
-      db = { raw, close: () => raw.close() };
+      db = { raw, ftsAvailable: false, vectorsAvailable: false, close: () => raw.close() };
     }
     try {
       const report = buildStorageReport({

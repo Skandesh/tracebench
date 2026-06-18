@@ -11,6 +11,8 @@ import {
   beginIndexRun,
   stageSession,
   stageEvents,
+  stageSearchChunks,
+  extractSearchChunksForEvents,
   publishIndexRun,
   failIndexRun,
   upsertDiscoveredSession,
@@ -230,6 +232,9 @@ async function indexOne(
           payloadMode: opts.payloadMode ?? 'external',
           payloadThresholdBytes: opts.payloadThresholdBytes,
         });
+        // Extract search chunks from the in-memory batch (no decompression) and
+        // stage them; publishIndexRun moves them into search_chunks + FTS.
+        stageSearchChunks(db, runId, extractSearchChunksForEvents(chunk.events));
       }
     } else {
       const loaded = await adapter.load(d.file_path);
@@ -240,6 +245,7 @@ async function indexOne(
         payloadMode: opts.payloadMode ?? 'external',
         payloadThresholdBytes: opts.payloadThresholdBytes,
       });
+      stageSearchChunks(db, runId, extractSearchChunksForEvents(loaded.events));
     }
 
     if (!session) {

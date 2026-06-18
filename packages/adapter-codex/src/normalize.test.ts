@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { loadSession, normalizeSession } from './normalize.js';
+import { loadSession, normalizeSession, streamLoadSession } from './normalize.js';
 import { parseSession } from './parse.js';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), '..', 'fixtures');
@@ -164,5 +164,21 @@ describe('discovery + edge cases', () => {
     const { events } = await loadSession(join(FIXTURES, '02-reasoning-and-apply-patch.jsonl'));
     const thinking = events.filter((e) => e.event_type === 'thinking');
     expect(thinking.every((t) => typeof t.content === 'string' && t.content!.length > 0)).toBe(true);
+  });
+});
+
+describe('streamLoadSession', () => {
+  it('emits the same canonical event order in batches with source line locators', async () => {
+    const path = join(FIXTURES, '01-simple.jsonl');
+    const loaded = await loadSession(path);
+    const streamedEvents = [];
+    let streamedSession = null as null | typeof loaded.session;
+    for await (const chunk of streamLoadSession(path, { batchSize: 2 })) {
+      if (chunk.type === 'session') streamedSession = chunk.session;
+      else streamedEvents.push(...chunk.events);
+    }
+    expect(streamedSession?.session_id).toBe(loaded.session.session_id);
+    expect(streamedEvents.map((e) => e.event_id)).toEqual(loaded.events.map((e) => e.event_id));
+    expect(streamedEvents.some((e) => typeof e.source.line === 'number')).toBe(true);
   });
 });

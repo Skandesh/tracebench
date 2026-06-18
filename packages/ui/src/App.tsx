@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Harness, Session, ToolCount, Turn, ViewMode } from './types';
-import { listSessions, getSession, getSessionTurns } from './api';
+import type { DiscoveredSession, Harness, Session, StorageReport, ToolCount, Turn, ViewMode } from './types';
+import {
+  listSessions,
+  getSession,
+  getSessionTurns,
+  listDiscoveredSessions,
+  getStorageReport,
+  indexSession,
+  reindex,
+} from './api';
 import { projectName } from './format';
 import { useErrorNavigation } from './hooks/useErrorNavigation';
 import { useTimelineJump } from './hooks/useTimelineJump';
@@ -10,6 +18,7 @@ import { SessionList } from './components/SessionList';
 import { Timeline } from './components/Timeline';
 import { AnalyticsRail } from './components/AnalyticsRail';
 import { SpendDashboard } from './components/SpendDashboard';
+import { SearchResults } from './components/SearchResults';
 
 interface SessionDetailBundle {
   session: Session;
@@ -19,6 +28,9 @@ interface SessionDetailBundle {
 
 export function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [discovered, setDiscovered] = useState<DiscoveredSession[]>([]);
+  const [storage, setStorage] = useState<StorageReport | null>(null);
+  const [indexingId, setIndexingId] = useState<string | null>(null);
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
 
@@ -47,6 +59,9 @@ export function App() {
   });
   const inspectorJump = useTimelineJump(activeId, timelineRef);
   const { collapsed: sessionsCollapsed, toggle: toggleSessionsPane } = useSessionsPaneCollapsed();
+  // A jump queued by clicking a search result, consumed once the target
+  // session's turns have loaded (the timeline element must exist to scroll to).
+  const pendingJumpRef = useRef<{ sessionId: string; eventId: string } | null>(null);
 
   // One initial fetch of *all* sessions, no harness filter. Filter + search
   // happen in-memory below so switching tabs is instant and tab counts are
@@ -55,8 +70,14 @@ export function App() {
     setSessionsLoading(true);
     setSessionsError(null);
     try {
-      const { sessions: rows } = await listSessions();
+      const [{ sessions: rows }, { sessions: manifest }, storageReport] = await Promise.all([
+        listSessions(),
+        listDiscoveredSessions(),
+        getStorageReport(),
+      ]);
       setSessions(rows);
+      setDiscovered(manifest);
+      setStorage(storageReport);
     } catch (e) {
       setSessionsError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -68,12 +89,17 @@ export function App() {
     void refresh();
   }, [refresh]);
 
+  const visibleSessions = useMemo(
+    () => mergeIndexedAndDiscoveredSessions(sessions, discovered),
+    [sessions, discovered],
+  );
+
   const sessionsForProjects = useMemo(() => {
-    return sessions.filter((s) => {
+    return visibleSessions.filter((s) => {
       if (filterHarness !== 'all' && s.harness !== filterHarness) return false;
       return true;
     });
-  }, [sessions, filterHarness]);
+  }, [visibleSessions, filterHarness]);
 
   const filteredSessions = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -104,10 +130,56 @@ export function App() {
   //   - if nothing is visible, clear the selection
   useEffect(() => {
     setActiveId((cur) => {
-      if (cur && filteredSessions.some((s) => s.session_id === cur)) return cur;
-      return filteredSessions[0]?.session_id ?? null;
+      if (cur && filteredSessions.some((s) => s.session_id === cur && isIndexedSession(s))) return cur;
+      return filteredSessions.find(isIndexedSession)?.session_id ?? null;
     });
   }, [filteredSessions]);
+
+  const handleIndexSession = useCallback(
+    async (id: string) => {
+      setIndexingId(id);
+      setSessionsError(null);
+      try {
+        await indexSession(id);
+        detailCacheRef.current.delete(id);
+        await refresh();
+        setActiveId(id);
+      } catch (e) {
+        setSessionsError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setIndexingId(null);
+      }
+    },
+    [refresh],
+  );
+
+  const handleReindex = useCallback(async () => {
+    setIndexingId('*');
+    setSessionsError(null);
+    try {
+      await reindex();
+      detailCacheRef.current.clear();
+      await refresh();
+    } catch (e) {
+      setSessionsError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setIndexingId(null);
+    }
+  }, [refresh]);
+
+  // Open a search result: select its session, switch to the timeline, and queue
+  // a jump to the matching event (consumed after detail loads). Separate surface
+  // — the client-side session-list filter (filteredSessions) is untouched.
+  const handleOpenResult = useCallback((sessionId: string, eventId: string) => {
+    pendingJumpRef.current = eventId ? { sessionId, eventId } : null;
+    setActiveId(sessionId);
+    setView('timeline');
+  }, []);
+
+  // Enter in the search box escalates from list-filtering to full-text search.
+  const handleSubmitSearch = useCallback(() => {
+    setView((v) => (search.trim() ? 'search' : v));
+  }, [search]);
 
   // Fetch detail + turns when active session changes
   // In-memory cache: session_id → { session, toolCounts, turns }. Re-visiting
@@ -158,13 +230,25 @@ export function App() {
     return () => { cancelled = true; };
   }, [activeId]);
 
+  // Consume a queued search-result jump once the target session's turns load.
+  useEffect(() => {
+    const pj = pendingJumpRef.current;
+    if (pj && pj.sessionId === activeId && turns.length > 0) {
+      inspectorJump.jumpToEvent(pj.eventId);
+      pendingJumpRef.current = null;
+    }
+  }, [turns, activeId, inspectorJump]);
+
   // Keyboard nav: j/k navigate sessions, / focuses search, Esc blurs input
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName ?? '';
       if (tag === 'INPUT' || tag === 'TEXTAREA') {
-        if (e.key === 'Escape') (target as HTMLInputElement).blur();
+        if (e.key === 'Escape') {
+          (target as HTMLInputElement).blur();
+          if (view === 'search') setView('timeline');
+        }
         return;
       }
       if (e.key === '/') {
@@ -177,14 +261,17 @@ export function App() {
         setView((v) => (v === 'dashboard' ? 'timeline' : 'dashboard'));
         return;
       }
-      if (!filteredSessions.length) return;
-      const i = filteredSessions.findIndex((s) => s.session_id === activeId);
-      if (e.key === 'j' && i >= 0 && i < filteredSessions.length - 1) setActiveId(filteredSessions[i + 1]!.session_id);
-      if (e.key === 'k' && i > 0) setActiveId(filteredSessions[i - 1]!.session_id);
+      const indexedSessions = filteredSessions.filter(isIndexedSession);
+      if (!indexedSessions.length) return;
+      const i = indexedSessions.findIndex((s) => s.session_id === activeId);
+      if (e.key === 'j' && i >= 0 && i < indexedSessions.length - 1) {
+        setActiveId(indexedSessions[i + 1]!.session_id);
+      }
+      if (e.key === 'k' && i > 0) setActiveId(indexedSessions[i - 1]!.session_id);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [filteredSessions, activeId]);
+  }, [filteredSessions, activeId, view]);
 
   return (
     <div className="tb-app" data-sessions-collapsed={sessionsCollapsed ? '1' : '0'}>
@@ -193,12 +280,22 @@ export function App() {
         setSearch={setSearch}
         filterHarness={filterHarness}
         setFilterHarness={setFilterHarness}
-        sessions={sessions}
+        sessions={visibleSessions}
         view={view}
         setView={setView}
+        onSubmitSearch={handleSubmitSearch}
+      />
+      <StorageStrip
+        storage={storage}
+        discovered={discovered.length}
+        indexed={sessions.length}
+        indexing={indexingId === '*'}
+        onReindex={handleReindex}
       />
       {view === 'dashboard' ? (
         <SpendDashboard sessions={sessions} onClose={() => setView('timeline')} />
+      ) : view === 'search' ? (
+        <SearchResults query={search} harness={filterHarness} onOpenResult={handleOpenResult} />
       ) : (
         <div className="tb-cols">
           <SessionList
@@ -208,6 +305,8 @@ export function App() {
             setFilterProject={setFilterProject}
             activeId={activeId}
             setActiveId={setActiveId}
+            onIndexSession={handleIndexSession}
+            indexingId={indexingId}
             onErrorClick={errNav.navigateForSession}
             collapsed={sessionsCollapsed}
             onToggleCollapsed={toggleSessionsPane}
@@ -246,6 +345,111 @@ export function App() {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function isIndexedSession(s: Session): boolean {
+  return s.indexed !== false;
+}
+
+// Discovered-only sessions have no parsed cwd yet, so they fall back to the raw
+// JSONL path — which makes the Projects sidebar show "<uuid>.jsonl". Claude Code
+// and Cursor store sessions under `…/projects/<encoded-cwd>/…`, where the cwd is
+// encoded with '/' → '-'. Decode that segment so discovered-only sessions show
+// (and group by) their real project. Best-effort: the encoding is lossy for
+// project dirs that contain '-', but it's a far better hint than a UUID, and
+// indexed sessions always use the authoritative cwd. Harnesses without a
+// project segment (e.g. Codex date dirs) keep the raw path.
+function discoveredProjectPath(rawPath: string): string {
+  const parts = rawPath.split('/').filter(Boolean);
+  const i = parts.lastIndexOf('projects');
+  const encoded = i >= 0 ? parts[i + 1] : undefined;
+  if (encoded) return encoded.replace(/-/g, '/');
+  return rawPath;
+}
+
+function mergeIndexedAndDiscoveredSessions(
+  indexed: Session[],
+  discovered: DiscoveredSession[],
+): Session[] {
+  const manifestByKey = new Map(discovered.map((d) => [`${d.harness}\0${d.raw_path}`, d]));
+  const out = indexed.map((s) => {
+    const manifest = manifestByKey.get(`${s.harness}\0${s.raw_path}`);
+    if (!manifest) return { ...s, indexed: true, index_state: s.index_state ?? 'hot' } as Session;
+    return {
+      ...s,
+      indexed: true,
+      index_state: manifest.index_state,
+      source_size: manifest.source_size,
+      indexed_at: manifest.indexed_at,
+      error_message: manifest.error_message,
+    };
+  });
+  const indexedKeys = new Set(indexed.map((s) => `${s.harness}\0${s.raw_path}`));
+  for (const d of discovered) {
+    const key = `${d.harness}\0${d.raw_path}`;
+    if (indexedKeys.has(key)) continue;
+    const startedAt = new Date(d.mtime_ms).toISOString();
+    out.push({
+      session_id: d.session_id,
+      harness: d.harness,
+      project_path: discoveredProjectPath(d.raw_path),
+      title: null,
+      started_at: startedAt,
+      ended_at: null,
+      model: null,
+      raw_path: d.raw_path,
+      format_version: d.format_version,
+      mtime_ms: d.mtime_ms,
+      index_state: d.index_state,
+      source_size: d.source_size,
+      indexed_at: d.indexed_at,
+      error_message: d.error_message,
+      indexed: false,
+      aggregates: {
+        total_cost_usd: 0,
+        total_input_tokens: 0,
+        total_output_tokens: 0,
+        total_cache_read_tokens: 0,
+        total_cache_creation_tokens: 0,
+        duration_ms: 0,
+        turn_count: 0,
+        tool_call_count: 0,
+        tool_error_count: 0,
+        message_count: 0,
+        files_touched: [],
+        models_used: [],
+      },
+    });
+  }
+  out.sort((a, b) => b.mtime_ms - a.mtime_ms || b.started_at.localeCompare(a.started_at));
+  return out;
+}
+
+function StorageStrip({
+  storage,
+  discovered,
+  indexed,
+  indexing,
+  onReindex,
+}: {
+  storage: StorageReport | null;
+  discovered: number;
+  indexed: number;
+  indexing: boolean;
+  onReindex: () => void;
+}) {
+  const deferred = Math.max(0, discovered - indexed);
+  const payloads = storage?.payload_bytes.external_payload_count ?? 0;
+  return (
+    <div className="tb-storage-strip">
+      <span>{indexed} indexed</span>
+      <span>{deferred} discovered-only</span>
+      <span>{payloads} archived payloads</span>
+      <button type="button" onClick={onReindex} disabled={indexing}>
+        {indexing ? 'Indexing…' : 'Refresh index'}
+      </button>
     </div>
   );
 }

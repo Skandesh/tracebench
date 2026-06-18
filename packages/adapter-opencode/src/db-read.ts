@@ -38,6 +38,7 @@ export interface SessionListEntry {
   title: string;
   directory: string;
   messageCount: number;
+  sourceBytes: number;
   timeCreated: number;
   timeUpdated: number;
 }
@@ -83,7 +84,12 @@ export function listSessions(dbPath: string): SessionListEntry[] {
     const rows = db
       .prepare(
         `SELECT s.id, s.title, s.directory, s.time_created, s.time_updated,
-                (SELECT COUNT(*) FROM message m WHERE m.session_id = s.id) AS message_count
+                (SELECT COUNT(*) FROM message m WHERE m.session_id = s.id) AS message_count,
+                (SELECT COALESCE(SUM(length(m.data)), 0)
+                   FROM message m WHERE m.session_id = s.id)
+                  +
+                (SELECT COALESCE(SUM(length(p.data)), 0)
+                   FROM part p WHERE p.session_id = s.id) AS source_bytes
          FROM session s
          ORDER BY s.time_updated DESC`,
       )
@@ -94,6 +100,7 @@ export function listSessions(dbPath: string): SessionListEntry[] {
       time_created: number;
       time_updated: number;
       message_count: number;
+      source_bytes: number;
     }>;
     db.close();
 
@@ -102,6 +109,7 @@ export function listSessions(dbPath: string): SessionListEntry[] {
       title: r.title,
       directory: r.directory,
       messageCount: r.message_count,
+      sourceBytes: r.source_bytes,
       timeCreated: r.time_created,
       timeUpdated: r.time_updated,
     }));

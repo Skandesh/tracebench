@@ -8,11 +8,17 @@
 //   a migration.
 
 import Database, { type Database as DB } from 'better-sqlite3';
+import { createRequire } from 'node:module';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { gzipSync } from 'node:zlib';
 import type {
   CanonicalEvent,
   ContextSnapshot,
+  DiscoveredSession,
+  DiscoveredSessionIndexState,
+  Harness,
   Session,
 } from './schema.js';
 
@@ -21,10 +27,33 @@ export interface OpenDbOptions {
   path: string;
   /** Skip migrations (advanced; for tests only). */
   skipMigrations?: boolean;
+  /**
+   * Opt in to the semantic leg: load the sqlite-vec extension and create
+   * vec_chunks. Off by default (KTD7) — the CLI sets it from `--embeddings`.
+   * If the optional dependency or platform binary is missing, this degrades to
+   * lexical-only rather than failing.
+   */
+  enableVectors?: boolean;
 }
+
+/** Embedding dimension for the vector store (must match the embed model). */
+export const EMBEDDING_DIM = 384;
 
 export interface TracebenchDb {
   raw: DB;
+  /**
+   * Whether the FTS5 lexical search tables (fts_words/fts_tri) were created and
+   * passed the contentless_delete capability probe. When false, search degrades
+   * to unavailable rather than bricking startup (see ensureSearchFts).
+   */
+  ftsAvailable: boolean;
+  /**
+   * Whether the sqlite-vec extension loaded and the vec_chunks table is usable.
+   * Wired by the semantic leg (U7); false until then. All vector reads AND
+   * writes are gated on this flag — the table existing is not the same as the
+   * extension being loaded.
+   */
+  vectorsAvailable: boolean;
   close(): void;
 }
 
@@ -116,6 +145,177 @@ const MIGRATIONS: { version: number; name: string; sql: string }[] = [
       ALTER TABLE sessions ADD COLUMN message_count            INTEGER;
     `,
   },
+  {
+    version: 3,
+    name: 'discovered_sessions_manifest',
+    sql: `
+      CREATE TABLE discovered_sessions (
+        harness        TEXT NOT NULL,
+        session_id     TEXT NOT NULL,
+        raw_path       TEXT NOT NULL,
+        format_version TEXT NOT NULL,
+        source_size    INTEGER NOT NULL,
+        mtime_ms       INTEGER NOT NULL,
+        index_state    TEXT NOT NULL DEFAULT 'discovered',
+        indexed_at     TEXT,
+        error_message  TEXT,
+        PRIMARY KEY (harness, raw_path)
+      );
+
+      CREATE INDEX discovered_sessions_by_harness
+        ON discovered_sessions(harness);
+      CREATE INDEX discovered_sessions_by_state
+        ON discovered_sessions(index_state);
+      CREATE INDEX discovered_sessions_by_mtime
+        ON discovered_sessions(mtime_ms DESC);
+      CREATE INDEX discovered_sessions_by_session
+        ON discovered_sessions(harness, session_id);
+    `,
+  },
+  {
+    version: 4,
+    name: 'external_event_payloads',
+    sql: `
+      CREATE TABLE event_payloads (
+        payload_id  TEXT PRIMARY KEY,
+        kind        TEXT NOT NULL,
+        codec       TEXT NOT NULL,
+        byte_length INTEGER NOT NULL,
+        hash        TEXT NOT NULL,
+        body        BLOB NOT NULL
+      );
+
+      CREATE INDEX event_payloads_by_hash
+        ON event_payloads(hash, byte_length);
+
+      CREATE TABLE event_payload_refs (
+        event_id   TEXT NOT NULL REFERENCES events(event_id) ON DELETE CASCADE,
+        field      TEXT NOT NULL,
+        payload_id TEXT NOT NULL REFERENCES event_payloads(payload_id),
+        PRIMARY KEY (event_id, field)
+      );
+
+      CREATE INDEX event_payload_refs_by_payload
+        ON event_payload_refs(payload_id);
+    `,
+  },
+  {
+    version: 5,
+    name: 'staged_index_runs',
+    sql: `
+      CREATE TABLE index_runs (
+        index_run_id TEXT PRIMARY KEY,
+        harness      TEXT NOT NULL,
+        session_id   TEXT NOT NULL,
+        raw_path     TEXT NOT NULL,
+        state        TEXT NOT NULL DEFAULT 'indexing',
+        started_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        finished_at  TEXT,
+        error_message TEXT
+      );
+
+      CREATE INDEX index_runs_by_state
+        ON index_runs(state);
+      CREATE INDEX index_runs_by_source
+        ON index_runs(harness, raw_path);
+
+      CREATE TABLE staged_sessions (
+        index_run_id   TEXT PRIMARY KEY REFERENCES index_runs(index_run_id) ON DELETE CASCADE,
+        session_id     TEXT NOT NULL,
+        session_json   TEXT NOT NULL,
+        aggregate_json TEXT NOT NULL
+      );
+
+      CREATE TABLE staged_events (
+        index_run_id     TEXT NOT NULL REFERENCES index_runs(index_run_id) ON DELETE CASCADE,
+        event_id         TEXT NOT NULL,
+        session_id       TEXT NOT NULL,
+        turn_id          TEXT NOT NULL,
+        parent_event_id  TEXT,
+        timestamp        TEXT NOT NULL,
+        seq              INTEGER NOT NULL,
+        role             TEXT NOT NULL,
+        event_type       TEXT NOT NULL,
+        model            TEXT,
+        cost_usd         REAL,
+        cost_method      TEXT,
+        duration_ms      INTEGER,
+        tok_input        INTEGER,
+        tok_output       INTEGER,
+        tok_cache_read   INTEGER,
+        tok_cache_create INTEGER,
+        tok_reasoning    INTEGER,
+        tool_name        TEXT,
+        tool_status      TEXT,
+        source_json      TEXT NOT NULL,
+        tokens_json      TEXT NOT NULL,
+        tool_json        TEXT NOT NULL,
+        content_json     TEXT,
+        metadata_json    TEXT NOT NULL,
+        raw_json         TEXT NOT NULL,
+        PRIMARY KEY (index_run_id, event_id)
+      );
+
+      CREATE INDEX staged_events_by_run_seq
+        ON staged_events(index_run_id, seq);
+
+      CREATE TABLE staged_event_payload_refs (
+        index_run_id TEXT NOT NULL REFERENCES index_runs(index_run_id) ON DELETE CASCADE,
+        event_id     TEXT NOT NULL,
+        field        TEXT NOT NULL,
+        payload_id   TEXT NOT NULL REFERENCES event_payloads(payload_id),
+        PRIMARY KEY (index_run_id, event_id, field)
+      );
+    `,
+  },
+  {
+    version: 6,
+    name: 'search_index_lexical',
+    // Plain tables only. The FTS5 virtual tables (fts_words/fts_tri) are created
+    // separately in ensureSearchFts() with a capability probe, because the
+    // trigram tokenizer + contentless_delete carry a (small, in practice) SQLite
+    // version risk and we degrade rather than brick the migration on failure.
+    sql: `
+      CREATE TABLE search_chunks (
+        chunk_id     INTEGER PRIMARY KEY,   -- supplied: hash(event_id, chunk_seq), never autoincrement
+        event_id     TEXT NOT NULL,
+        session_id   TEXT NOT NULL,
+        turn_id      TEXT,
+        harness      TEXT NOT NULL,
+        chunk_seq    INTEGER NOT NULL,      -- ordinal of the chunk within its event (NOT events.seq)
+        text         TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        embed_state  TEXT NOT NULL DEFAULT 'vector-pending'  -- 'vector-pending' | 'embedded'
+      );
+
+      CREATE INDEX search_chunks_by_session ON search_chunks(session_id);
+      CREATE INDEX search_chunks_by_event   ON search_chunks(event_id);
+      CREATE INDEX search_chunks_by_embed   ON search_chunks(embed_state);
+
+      CREATE TABLE staged_search_chunks (
+        index_run_id TEXT NOT NULL REFERENCES index_runs(index_run_id) ON DELETE CASCADE,
+        chunk_id     INTEGER NOT NULL,
+        event_id     TEXT NOT NULL,
+        session_id   TEXT NOT NULL,
+        turn_id      TEXT,
+        harness      TEXT NOT NULL,
+        chunk_seq    INTEGER NOT NULL,
+        text         TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        embed_state  TEXT NOT NULL DEFAULT 'vector-pending',
+        PRIMARY KEY (index_run_id, chunk_id)
+      );
+
+      CREATE INDEX staged_search_chunks_by_run ON staged_search_chunks(index_run_id);
+
+      -- Positive, atomic detection marker for the lexical upgrade backfill (U6).
+      CREATE TABLE search_backfill_state (
+        session_id   TEXT PRIMARY KEY,
+        mtime_ms     INTEGER NOT NULL,
+        lexical_done INTEGER NOT NULL DEFAULT 0
+      );
+    `,
+  },
 ];
 
 function ensureMigrationsTable(db: DB): void {
@@ -148,6 +348,126 @@ function runMigrations(db: DB): void {
   }
 }
 
+/**
+ * Create the FTS5 lexical search tables and verify they actually work, OUTSIDE
+ * the migration system. The trigram tokenizer (SQLite 3.34+) and
+ * contentless_delete=1 (3.43+) are satisfied by the bundled SQLite that
+ * better-sqlite3 11.x ships (3.45+), but the `^` range doesn't contractually
+ * guarantee it — so we probe and DEGRADE (return false) rather than throw,
+ * which would abort openDb and brick startup.
+ */
+function ensureSearchFts(db: DB): boolean {
+  try {
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS fts_words USING fts5(
+        text, content='', contentless_delete=1,
+        tokenize='porter unicode61 remove_diacritics 2'
+      );
+      CREATE VIRTUAL TABLE IF NOT EXISTS fts_tri USING fts5(
+        text, content='', contentless_delete=1,
+        tokenize='trigram'
+      );
+    `);
+    // Capability probe: contentless_delete must genuinely delete, not no-op.
+    const probeRowid = -424242;
+    const probeTerm = 'tracebenchftsprobe';
+    db.prepare('INSERT INTO fts_words(rowid, text) VALUES (?, ?)').run(probeRowid, probeTerm);
+    db.prepare('DELETE FROM fts_words WHERE rowid = ?').run(probeRowid);
+    const stillThere = db
+      .prepare('SELECT rowid FROM fts_words WHERE fts_words MATCH ?')
+      .get(probeTerm);
+    return stillThere == null;
+  } catch {
+    // FTS5 / trigram / contentless_delete unsupported on this SQLite build.
+    return false;
+  }
+}
+
+const nodeRequire = createRequire(import.meta.url);
+
+/**
+ * Load the optional sqlite-vec extension. Returns false (degrade to lexical) if
+ * the optional dependency or platform binary is missing, or loadExtension is
+ * disabled — never throws. Must run before any vec_chunks access.
+ */
+function loadVectorExtension(db: DB): boolean {
+  try {
+    const vec = nodeRequire('sqlite-vec') as { load: (d: DB) => void };
+    vec.load(db);
+    db.prepare('SELECT vec_version()').get();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Create the vec_chunks table (conditionally — it can't be an unconditional
+ * migration because the extension may be absent) and the vec_meta versioning
+ * table. Returns false on any failure.
+ */
+function ensureVecChunks(db: DB): boolean {
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS vec_meta (key TEXT PRIMARY KEY, value TEXT);
+      CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
+        chunk_id  INTEGER PRIMARY KEY,
+        embedding float[${EMBEDDING_DIM}],
+        harness   TEXT
+      );
+    `);
+    db.prepare(
+      `INSERT INTO vec_meta(key, value) VALUES ('embedding_dim', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    ).run(String(EMBEDDING_DIM));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Read a vec_meta value (model_id / chunker_version / embedding_dim). */
+export function getVecMeta(db: TracebenchDb, key: string): string | null {
+  if (!db.vectorsAvailable) return null;
+  const row = db.raw.prepare('SELECT value FROM vec_meta WHERE key = ?').get(key) as
+    | { value: string }
+    | undefined;
+  return row?.value ?? null;
+}
+
+/** Write a vec_meta value. No-op when vectors are unavailable. */
+export function setVecMeta(db: TracebenchDb, key: string, value: string): void {
+  if (!db.vectorsAvailable) return;
+  db.raw
+    .prepare(
+      `INSERT INTO vec_meta(key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    )
+    .run(key, value);
+}
+
+/** Insert/replace a chunk's embedding. chunk_id is bound as BigInt (vec0 PK). */
+export function insertVector(
+  db: TracebenchDb,
+  chunkId: number,
+  harness: string,
+  vector: Float32Array | number[],
+): void {
+  if (!db.vectorsAvailable) return;
+  const buf = Buffer.from(Float32Array.from(vector).buffer);
+  const id = BigInt(chunkId);
+  db.raw.prepare('DELETE FROM vec_chunks WHERE chunk_id = ?').run(id);
+  db.raw
+    .prepare('INSERT INTO vec_chunks(chunk_id, embedding, harness) VALUES (?, ?, ?)')
+    .run(id, buf, harness);
+}
+
+/** Total stored vectors (for the maxVectorChunks budget). */
+export function countVectors(db: TracebenchDb): number {
+  if (!db.vectorsAvailable) return 0;
+  return (db.raw.prepare('SELECT count(*) AS n FROM vec_chunks').get() as { n: number }).n;
+}
+
 export function openDb(opts: OpenDbOptions): TracebenchDb {
   if (opts.path !== ':memory:') {
     mkdirSync(dirname(opts.path), { recursive: true });
@@ -156,11 +476,26 @@ export function openDb(opts: OpenDbOptions): TracebenchDb {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   db.pragma('synchronous = NORMAL');
-  if (!opts.skipMigrations) runMigrations(db);
-  return {
+  // Bounds contention if a second process opens the same DB (RISK16); the CLI
+  // adds the single-instance guard on top.
+  db.pragma('busy_timeout = 5000');
+  // Load the vector extension BEFORE schema access so a DB that already contains
+  // a vec_chunks vtable can still be opened (RISK12).
+  const handle: TracebenchDb = {
     raw: db,
+    ftsAvailable: false,
+    vectorsAvailable: false,
     close: () => db.close(),
   };
+  if (opts.enableVectors && loadVectorExtension(db)) {
+    handle.vectorsAvailable = true;
+  }
+  if (!opts.skipMigrations) runMigrations(db);
+  if (!opts.skipMigrations) handle.ftsAvailable = ensureSearchFts(db);
+  if (handle.vectorsAvailable && !opts.skipMigrations) {
+    handle.vectorsAvailable = ensureVecChunks(db);
+  }
+  return handle;
 }
 
 // ── Session writes ──────────────────────────────────────────────────────────
@@ -246,10 +581,317 @@ export function upsertSession(
 }
 
 export function deleteSessionEvents(db: TracebenchDb, sessionId: string): void {
+  deleteSessionSearchChunks(db, sessionId);
   db.raw.prepare('DELETE FROM events WHERE session_id = ?').run(sessionId);
   db.raw
     .prepare('DELETE FROM context_snapshots WHERE session_id = ?')
     .run(sessionId);
+  db.raw
+    .prepare(
+      `DELETE FROM event_payloads
+       WHERE NOT EXISTS (
+         SELECT 1 FROM event_payload_refs
+         WHERE event_payload_refs.payload_id = event_payloads.payload_id
+       )`,
+    )
+    .run();
+}
+
+// ── Search chunks (lexical FTS index source) ────────────────────────────────
+
+/** One searchable chunk. `chunk_id` is deterministic — see chunkIdFor. */
+export interface SearchChunkRow {
+  chunk_id: number;
+  event_id: string;
+  session_id: string;
+  turn_id: string | null;
+  harness: string;
+  chunk_seq: number;
+  text: string;
+  content_hash: string;
+  embed_state?: string;
+}
+
+/**
+ * Deterministic, pre-assigned chunk_id = a 52-bit truncation of
+ * SHA-256(event_id, chunk_seq). Stable across re-index (same event/chunk →
+ * same id), so FTS rowids and vec_chunks.chunk_id stay aligned. 52 bits fits a
+ * JS safe integer; collision probability is negligible at expected corpus sizes
+ * and an INSERT OR IGNORE makes any collision a (logged) dropped chunk, not
+ * corruption. `chunk_seq` is the ordinal WITHIN the event's split — never
+ * events.seq.
+ */
+export function chunkIdFor(eventId: string, chunkSeq: number): number {
+  const h = createHash('sha256').update(eventId).update('\0').update(String(chunkSeq)).digest();
+  const hi = h.readUInt32BE(0);
+  const lo = h.readUInt32BE(4);
+  const top20 = hi & 0xfffff; // low 20 bits of the high word
+  return top20 * 0x1_0000_0000 + lo; // 52-bit value, always in [0, 2^52)
+}
+
+/**
+ * Delete a session's search chunks consistently. Rowid-first ordering:
+ * contentless FTS5 rows can only be deleted by a rowid known in advance, so
+ * read chunk_ids from search_chunks FIRST, delete FTS (and vectors, when the
+ * extension is loaded) by rowid, then delete search_chunks LAST. Reversing this
+ * orphans FTS/vector rows into permanent stale hits.
+ */
+export function deleteSessionSearchChunks(db: TracebenchDb, sessionId: string): void {
+  const ids = (
+    db.raw.prepare('SELECT chunk_id FROM search_chunks WHERE session_id = ?').all(sessionId) as {
+      chunk_id: number;
+    }[]
+  ).map((r) => r.chunk_id);
+  if (ids.length) {
+    if (db.ftsAvailable) {
+      const delW = db.raw.prepare('DELETE FROM fts_words WHERE rowid = ?');
+      const delT = db.raw.prepare('DELETE FROM fts_tri WHERE rowid = ?');
+      for (const id of ids) {
+        delW.run(id);
+        delT.run(id);
+      }
+    }
+    if (db.vectorsAvailable) {
+      const delV = db.raw.prepare('DELETE FROM vec_chunks WHERE chunk_id = ?');
+      for (const id of ids) delV.run(BigInt(id)); // vec0 PK is bound as BigInt
+    }
+  }
+  db.raw.prepare('DELETE FROM search_chunks WHERE session_id = ?').run(sessionId);
+}
+
+/** Insert one chunk into search_chunks and (when available) both FTS tables. */
+export function insertSearchChunk(db: TracebenchDb, c: SearchChunkRow): void {
+  const info = db.raw
+    .prepare(
+      `INSERT OR IGNORE INTO search_chunks
+         (chunk_id, event_id, session_id, turn_id, harness, chunk_seq, text, content_hash, embed_state)
+       VALUES (@chunk_id, @event_id, @session_id, @turn_id, @harness, @chunk_seq, @text, @content_hash, @embed_state)`,
+    )
+    .run({ ...c, turn_id: c.turn_id ?? null, embed_state: c.embed_state ?? 'vector-pending' });
+  if (info.changes > 0 && db.ftsAvailable) {
+    db.raw.prepare('INSERT INTO fts_words(rowid, text) VALUES (?, ?)').run(c.chunk_id, c.text);
+    db.raw.prepare('INSERT INTO fts_tri(rowid, text) VALUES (?, ?)').run(c.chunk_id, c.text);
+  }
+}
+
+/** Stage chunks for a not-yet-published index run (mirrors stageEvents). */
+export function stageSearchChunks(
+  db: TracebenchDb,
+  indexRunId: string,
+  chunks: SearchChunkRow[],
+): void {
+  if (chunks.length === 0) return;
+  const stmt = db.raw.prepare(
+    `INSERT OR IGNORE INTO staged_search_chunks
+       (index_run_id, chunk_id, event_id, session_id, turn_id, harness, chunk_seq, text, content_hash, embed_state)
+     VALUES (@index_run_id, @chunk_id, @event_id, @session_id, @turn_id, @harness, @chunk_seq, @text, @content_hash, @embed_state)`,
+  );
+  const tx = db.raw.transaction((batch: SearchChunkRow[]) => {
+    for (const c of batch) {
+      stmt.run({
+        ...c,
+        index_run_id: indexRunId,
+        turn_id: c.turn_id ?? null,
+        embed_state: c.embed_state ?? 'vector-pending',
+      });
+    }
+  });
+  tx(chunks);
+}
+
+// ── Discovered session manifest ─────────────────────────────────────────────
+
+export interface UpsertDiscoveredSessionInput {
+  harness: Harness;
+  session_id: string;
+  raw_path: string;
+  format_version: string;
+  source_size: number;
+  mtime_ms: number;
+}
+
+const UPSERT_DISCOVERED_SQL = `
+  INSERT INTO discovered_sessions (
+    harness, session_id, raw_path, format_version, source_size, mtime_ms,
+    index_state, indexed_at, error_message
+  ) VALUES (
+    @harness, @session_id, @raw_path, @format_version, @source_size, @mtime_ms,
+    'discovered', NULL, NULL
+  )
+  ON CONFLICT(harness, raw_path) DO UPDATE SET
+    session_id     = excluded.session_id,
+    format_version = excluded.format_version,
+    source_size    = excluded.source_size,
+    mtime_ms       = excluded.mtime_ms,
+    index_state    = CASE
+      WHEN discovered_sessions.mtime_ms = excluded.mtime_ms
+       AND discovered_sessions.index_state IN ('hot', 'warm', 'raw_archived')
+      THEN discovered_sessions.index_state
+      ELSE 'discovered'
+    END,
+    indexed_at = CASE
+      WHEN discovered_sessions.mtime_ms = excluded.mtime_ms
+       AND discovered_sessions.index_state IN ('hot', 'warm', 'raw_archived')
+      THEN discovered_sessions.indexed_at
+      ELSE NULL
+    END,
+    error_message = NULL
+`;
+
+export function upsertDiscoveredSession(
+  db: TracebenchDb,
+  input: UpsertDiscoveredSessionInput,
+): void {
+  db.raw.prepare(UPSERT_DISCOVERED_SQL).run(input);
+}
+
+export function markDiscoveredSessionIndexed(
+  db: TracebenchDb,
+  harness: Harness,
+  rawPath: string,
+  state: DiscoveredSessionIndexState = 'hot',
+): void {
+  db.raw
+    .prepare(
+      `UPDATE discovered_sessions
+       SET index_state = ?, indexed_at = datetime('now'), error_message = NULL
+       WHERE harness = ? AND raw_path = ?`,
+    )
+    .run(state, harness, rawPath);
+}
+
+export function markDiscoveredSessionIndexing(
+  db: TracebenchDb,
+  harness: Harness,
+  rawPath: string,
+): void {
+  db.raw
+    .prepare(
+      `UPDATE discovered_sessions
+       SET index_state = 'indexing', error_message = NULL
+       WHERE harness = ? AND raw_path = ?`,
+    )
+    .run(harness, rawPath);
+}
+
+export function markDiscoveredSessionError(
+  db: TracebenchDb,
+  harness: Harness,
+  rawPath: string,
+  message: string,
+): void {
+  db.raw
+    .prepare(
+      `UPDATE discovered_sessions
+       SET index_state = 'error', error_message = ?
+       WHERE harness = ? AND raw_path = ?`,
+    )
+    .run(message, harness, rawPath);
+}
+
+export function getDiscoveredSession(
+  db: TracebenchDb,
+  harness: Harness,
+  rawPath: string,
+): DiscoveredSession | null {
+  const row = db.raw
+    .prepare('SELECT * FROM discovered_sessions WHERE harness = ? AND raw_path = ?')
+    .get(harness, rawPath) as DiscoveredSession | undefined;
+  return row ?? null;
+}
+
+export function listDiscoveredSessions(
+  db: TracebenchDb,
+  opts: { harness?: Harness; session_id?: string } = {},
+): DiscoveredSession[] {
+  const where: string[] = [];
+  const params: Record<string, unknown> = {};
+  if (opts.harness) {
+    where.push('harness = @harness');
+    params.harness = opts.harness;
+  }
+  if (opts.session_id) {
+    where.push('session_id = @session_id');
+    params.session_id = opts.session_id;
+  }
+  const rows = db.raw
+    .prepare(
+      `SELECT * FROM discovered_sessions
+       ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+       ORDER BY mtime_ms DESC`,
+    )
+    .all(params) as DiscoveredSession[];
+  return rows;
+}
+
+// ── Staged index runs ───────────────────────────────────────────────────────
+
+export function beginIndexRun(
+  db: TracebenchDb,
+  input: { harness: Harness; session_id: string; raw_path: string },
+): string {
+  const id = randomUUID();
+  db.raw
+    .prepare(
+      `INSERT INTO index_runs (index_run_id, harness, session_id, raw_path)
+       VALUES (?, ?, ?, ?)`,
+    )
+    .run(id, input.harness, input.session_id, input.raw_path);
+  return id;
+}
+
+export function failIndexRun(
+  db: TracebenchDb,
+  indexRunId: string,
+  message: string,
+): void {
+  db.raw.transaction(() => {
+    db.raw
+      .prepare(
+        `UPDATE index_runs
+         SET state = 'error', finished_at = datetime('now'), error_message = ?
+         WHERE index_run_id = ?`,
+      )
+      .run(message, indexRunId);
+    cleanupStagedRows(db, indexRunId);
+  })();
+}
+
+function cleanupStagedRows(db: TracebenchDb, indexRunId: string): void {
+  db.raw.prepare('DELETE FROM staged_event_payload_refs WHERE index_run_id = ?').run(indexRunId);
+  db.raw.prepare('DELETE FROM staged_events WHERE index_run_id = ?').run(indexRunId);
+  db.raw.prepare('DELETE FROM staged_sessions WHERE index_run_id = ?').run(indexRunId);
+  // Staged chunks never reached FTS, so this is a plain delete-by-run — distinct
+  // from the rowid-first session purge in deleteSessionSearchChunks.
+  db.raw.prepare('DELETE FROM staged_search_chunks WHERE index_run_id = ?').run(indexRunId);
+  db.raw
+    .prepare(
+      `DELETE FROM event_payloads
+       WHERE NOT EXISTS (
+         SELECT 1 FROM event_payload_refs
+         WHERE event_payload_refs.payload_id = event_payloads.payload_id
+       )
+       AND NOT EXISTS (
+         SELECT 1 FROM staged_event_payload_refs
+         WHERE staged_event_payload_refs.payload_id = event_payloads.payload_id
+       )`,
+    )
+    .run();
+}
+
+export function stageSession(
+  db: TracebenchDb,
+  indexRunId: string,
+  session: Session,
+  agg: SessionAggregateRow,
+): void {
+  db.raw
+    .prepare(
+      `INSERT OR REPLACE INTO staged_sessions
+         (index_run_id, session_id, session_json, aggregate_json)
+       VALUES (?, ?, ?, ?)`,
+    )
+    .run(indexRunId, session.session_id, JSON.stringify(session), JSON.stringify(agg));
 }
 
 // ── Event writes ────────────────────────────────────────────────────────────
@@ -271,47 +913,422 @@ const INSERT_EVENT_SQL = `
   ON CONFLICT(event_id) DO NOTHING
 `;
 
+const INSERT_STAGED_EVENT_SQL = `
+  INSERT INTO staged_events (
+    index_run_id,
+    event_id, session_id, turn_id, parent_event_id, timestamp, seq,
+    role, event_type, model, cost_usd, cost_method, duration_ms,
+    tok_input, tok_output, tok_cache_read, tok_cache_create, tok_reasoning,
+    tool_name, tool_status,
+    source_json, tokens_json, tool_json, content_json, metadata_json, raw_json
+  ) VALUES (
+    @index_run_id,
+    @event_id, @session_id, @turn_id, @parent_event_id, @timestamp, @seq,
+    @role, @event_type, @model, @cost_usd, @cost_method, @duration_ms,
+    @tok_input, @tok_output, @tok_cache_read, @tok_cache_create, @tok_reasoning,
+    @tool_name, @tool_status,
+    @source_json, @tokens_json, @tool_json, @content_json, @metadata_json, @raw_json
+  )
+  ON CONFLICT(index_run_id, event_id) DO NOTHING
+`;
+
+interface SerializedEventRow {
+  event_id: string;
+  session_id: string;
+  turn_id: string;
+  parent_event_id: string | null;
+  timestamp: string;
+  seq: number;
+  role: string;
+  event_type: string;
+  model: string | null;
+  cost_usd: number | null;
+  cost_method: string | null;
+  duration_ms: number | null;
+  tok_input: number | null;
+  tok_output: number | null;
+  tok_cache_read: number | null;
+  tok_cache_create: number | null;
+  tok_reasoning: number | null;
+  tool_name: string | null;
+  tool_status: string | null;
+  source_json: string;
+  tokens_json: string;
+  tool_json: string;
+  content_json: string | null;
+  metadata_json: string;
+  raw_json: string;
+  content_payload: unknown;
+  tool_payload: CanonicalEvent['tool'];
+  raw_payload: unknown;
+}
+
 export function insertEvents(
   db: TracebenchDb,
   events: CanonicalEvent[],
   startSeq = 0,
+  options: {
+    rawMode?: 'full' | 'reference';
+    payloadMode?: 'inline' | 'external';
+    payloadThresholdBytes?: number;
+  } = {},
 ): number {
   if (events.length === 0) return startSeq;
   const stmt = db.raw.prepare(INSERT_EVENT_SQL);
+  const payloadMode = options.payloadMode ?? 'inline';
+  const payloadThresholdBytes = options.payloadThresholdBytes ?? 64 * 1024;
   const tx = db.raw.transaction((batch: CanonicalEvent[], seq0: number) => {
     let seq = seq0;
     for (const e of batch) {
-      stmt.run({
-        event_id: e.event_id,
-        session_id: e.session_id,
-        turn_id: e.turn_id,
-        parent_event_id: e.parent_event_id,
-        timestamp: e.timestamp,
-        seq: seq++,
-        role: e.role,
-        event_type: e.event_type,
-        model: e.model,
-        cost_usd: e.cost_usd,
-        cost_method: e.cost_method,
-        duration_ms: e.duration_ms,
-        tok_input: e.tokens.input,
-        tok_output: e.tokens.output,
-        tok_cache_read: e.tokens.cache_read,
-        tok_cache_create: e.tokens.cache_creation,
-        tok_reasoning: e.tokens.reasoning,
-        tool_name: e.tool.name,
-        tool_status: e.tool.status,
-        source_json: JSON.stringify(e.source),
-        tokens_json: JSON.stringify(e.tokens),
-        tool_json: JSON.stringify(e.tool),
-        content_json: e.content == null ? null : JSON.stringify(e.content),
-        metadata_json: JSON.stringify(e.metadata),
-        raw_json: JSON.stringify(e.raw),
+      const row = serializeEventForStorage(db, e, seq++, {
+        rawMode: options.rawMode ?? 'full',
+        payloadMode,
+        payloadThresholdBytes,
       });
+      const info = stmt.run(row);
+      if (info.changes > 0) {
+        insertPayloadRefsForEvent(
+          db,
+          e.event_id,
+          row.content_payload,
+          row.tool_payload,
+          row.raw_payload,
+        );
+      }
     }
     return seq;
   });
   return tx(events, startSeq);
+}
+
+export function stageEvents(
+  db: TracebenchDb,
+  indexRunId: string,
+  events: CanonicalEvent[],
+  startSeq = 0,
+  options: {
+    rawMode?: 'full' | 'reference';
+    payloadMode?: 'inline' | 'external';
+    payloadThresholdBytes?: number;
+  } = {},
+): number {
+  if (events.length === 0) return startSeq;
+  const stmt = db.raw.prepare(INSERT_STAGED_EVENT_SQL);
+  const payloadMode = options.payloadMode ?? 'inline';
+  const payloadThresholdBytes = options.payloadThresholdBytes ?? 64 * 1024;
+  const tx = db.raw.transaction((batch: CanonicalEvent[], seq0: number) => {
+    let seq = seq0;
+    for (const e of batch) {
+      const row = serializeEventForStorage(db, e, seq++, {
+        rawMode: options.rawMode ?? 'full',
+        payloadMode,
+        payloadThresholdBytes,
+      });
+      const info = stmt.run({ index_run_id: indexRunId, ...row });
+      if (info.changes > 0) {
+        insertPayloadRefsForStagedEvent(
+          db,
+          indexRunId,
+          e.event_id,
+          row.content_payload,
+          row.tool_payload,
+          row.raw_payload,
+        );
+      }
+    }
+    return seq;
+  });
+  return tx(events, startSeq);
+}
+
+function serializeEventForStorage(
+  db: TracebenchDb,
+  e: CanonicalEvent,
+  seq: number,
+  options: {
+    rawMode: 'full' | 'reference';
+    payloadMode: 'inline' | 'external';
+    payloadThresholdBytes: number;
+  },
+): SerializedEventRow {
+  const content = maybeExternalizePayload(db, 'content', e.content, options);
+  const tool = maybeExternalizeTool(db, e, options);
+  const raw =
+    options.rawMode === 'reference'
+      ? rawReferenceForEvent(e)
+      : maybeExternalizePayload(db, 'raw', e.raw, options);
+  return {
+    event_id: e.event_id,
+    session_id: e.session_id,
+    turn_id: e.turn_id,
+    parent_event_id: e.parent_event_id,
+    timestamp: e.timestamp,
+    seq,
+    role: e.role,
+    event_type: e.event_type,
+    model: e.model,
+    cost_usd: e.cost_usd,
+    cost_method: e.cost_method,
+    duration_ms: e.duration_ms,
+    tok_input: e.tokens.input,
+    tok_output: e.tokens.output,
+    tok_cache_read: e.tokens.cache_read,
+    tok_cache_create: e.tokens.cache_creation,
+    tok_reasoning: e.tokens.reasoning,
+    tool_name: e.tool.name,
+    tool_status: e.tool.status,
+    source_json: JSON.stringify(e.source),
+    tokens_json: JSON.stringify(e.tokens),
+    tool_json: JSON.stringify(tool),
+    content_json: content == null ? null : JSON.stringify(content),
+    metadata_json: JSON.stringify(e.metadata),
+    raw_json: JSON.stringify(raw),
+    content_payload: content,
+    tool_payload: tool,
+    raw_payload: raw,
+  };
+}
+
+export interface EventPayloadReference {
+  _tracebench_payload: 'ref';
+  payload_id: string;
+  kind: string;
+  byte_length: number;
+  codec: 'gzip';
+}
+
+interface PayloadExternalizeOptions {
+  payloadMode: 'inline' | 'external';
+  payloadThresholdBytes: number;
+}
+
+function maybeExternalizeTool(
+  db: TracebenchDb,
+  e: CanonicalEvent,
+  opts: PayloadExternalizeOptions,
+): CanonicalEvent['tool'] {
+  const input = maybeExternalizePayload(db, 'tool_input', e.tool.input, opts);
+  const output = maybeExternalizePayload(db, 'tool_output', e.tool.output, opts);
+  if (input === e.tool.input && output === e.tool.output) return e.tool;
+  return { ...e.tool, input, output } as CanonicalEvent['tool'];
+}
+
+function maybeExternalizePayload<T>(
+  db: TracebenchDb,
+  field: string,
+  value: T,
+  opts: PayloadExternalizeOptions,
+): T | EventPayloadReference {
+  if (opts.payloadMode !== 'external' || value == null) return value;
+  const text = JSON.stringify(value);
+  const byteLength = Buffer.byteLength(text, 'utf8');
+  if (byteLength <= opts.payloadThresholdBytes) return value;
+
+  const hash = createHash('sha256').update(text).digest('hex');
+  const payloadId = createHash('sha256')
+    .update(field)
+    .update('\0')
+    .update(hash)
+    .digest('hex');
+  const body = gzipSync(Buffer.from(text, 'utf8'));
+
+  db.raw
+    .prepare(
+      `INSERT OR IGNORE INTO event_payloads
+         (payload_id, kind, codec, byte_length, hash, body)
+       VALUES (?, ?, 'gzip', ?, ?, ?)`,
+    )
+    .run(payloadId, field, byteLength, hash, body);
+
+  return {
+    _tracebench_payload: 'ref',
+    payload_id: payloadId,
+    kind: field,
+    byte_length: byteLength,
+    codec: 'gzip',
+  };
+}
+
+function insertPayloadRefsForEvent(
+  db: TracebenchDb,
+  eventId: string,
+  content: unknown,
+  tool: CanonicalEvent['tool'],
+  raw: unknown,
+): void {
+  insertPayloadRef(db, eventId, 'content', content);
+  insertPayloadRef(db, eventId, 'tool_input', tool.input);
+  insertPayloadRef(db, eventId, 'tool_output', tool.output);
+  insertPayloadRef(db, eventId, 'raw', raw);
+}
+
+function insertPayloadRefsForStagedEvent(
+  db: TracebenchDb,
+  indexRunId: string,
+  eventId: string,
+  content: unknown,
+  tool: CanonicalEvent['tool'],
+  raw: unknown,
+): void {
+  insertStagedPayloadRef(db, indexRunId, eventId, 'content', content);
+  insertStagedPayloadRef(db, indexRunId, eventId, 'tool_input', tool.input);
+  insertStagedPayloadRef(db, indexRunId, eventId, 'tool_output', tool.output);
+  insertStagedPayloadRef(db, indexRunId, eventId, 'raw', raw);
+}
+
+function insertPayloadRef(
+  db: TracebenchDb,
+  eventId: string,
+  field: string,
+  value: unknown,
+): void {
+  if (!isEventPayloadReference(value)) return;
+  db.raw
+    .prepare(
+      `INSERT OR REPLACE INTO event_payload_refs
+         (event_id, field, payload_id)
+       VALUES (?, ?, ?)`,
+    )
+    .run(eventId, field, value.payload_id);
+}
+
+function insertStagedPayloadRef(
+  db: TracebenchDb,
+  indexRunId: string,
+  eventId: string,
+  field: string,
+  value: unknown,
+): void {
+  if (!isEventPayloadReference(value)) return;
+  db.raw
+    .prepare(
+      `INSERT OR REPLACE INTO staged_event_payload_refs
+         (index_run_id, event_id, field, payload_id)
+       VALUES (?, ?, ?, ?)`,
+    )
+    .run(indexRunId, eventId, field, value.payload_id);
+}
+
+function isEventPayloadReference(value: unknown): value is EventPayloadReference {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as { _tracebench_payload?: unknown })._tracebench_payload === 'ref' &&
+    typeof (value as { payload_id?: unknown }).payload_id === 'string'
+  );
+}
+
+function rawReferenceForEvent(e: CanonicalEvent): Record<string, unknown> {
+  const ref: Record<string, unknown> = {
+    _tracebench_raw: 'source_ref',
+    raw_path: e.source.raw_path,
+    harness: e.source.harness,
+    event_id: e.event_id,
+    timestamp: e.timestamp,
+  };
+  if (typeof e.source.line === 'number') ref.line = e.source.line;
+  if (typeof e.source.raw_index === 'number') ref.raw_index = e.source.raw_index;
+  return ref;
+}
+
+export function publishIndexRun(
+  db: TracebenchDb,
+  indexRunId: string,
+  input: {
+    harness: Harness;
+    rawPath: string;
+    state?: DiscoveredSessionIndexState;
+  },
+): void {
+  const staged = db.raw
+    .prepare('SELECT session_json, aggregate_json FROM staged_sessions WHERE index_run_id = ?')
+    .get(indexRunId) as { session_json: string; aggregate_json: string } | undefined;
+  if (!staged) {
+    throw new Error(`index run ${indexRunId} has no staged session`);
+  }
+  const session = JSON.parse(staged.session_json) as Session;
+  const aggregate = JSON.parse(staged.aggregate_json) as SessionAggregateRow;
+
+  db.raw.transaction(() => {
+    deleteSessionEvents(db, session.session_id);
+    upsertSession(db, session, aggregate);
+    db.raw
+      .prepare(
+        `INSERT OR IGNORE INTO events (
+           event_id, session_id, turn_id, parent_event_id, timestamp, seq,
+           role, event_type, model, cost_usd, cost_method, duration_ms,
+           tok_input, tok_output, tok_cache_read, tok_cache_create, tok_reasoning,
+           tool_name, tool_status,
+           source_json, tokens_json, tool_json, content_json, metadata_json, raw_json
+         )
+         SELECT
+           event_id, session_id, turn_id, parent_event_id, timestamp, seq,
+           role, event_type, model, cost_usd, cost_method, duration_ms,
+           tok_input, tok_output, tok_cache_read, tok_cache_create, tok_reasoning,
+           tool_name, tool_status,
+           source_json, tokens_json, tool_json, content_json, metadata_json, raw_json
+         FROM staged_events
+         WHERE index_run_id = ?
+         ORDER BY seq ASC`,
+      )
+      .run(indexRunId);
+    db.raw
+      .prepare(
+        `INSERT OR REPLACE INTO event_payload_refs (event_id, field, payload_id)
+         SELECT event_id, field, payload_id
+         FROM staged_event_payload_refs
+         WHERE index_run_id = ?
+           AND EXISTS (
+             SELECT 1 FROM events
+             WHERE events.event_id = staged_event_payload_refs.event_id
+               AND events.session_id = ?
+           )`,
+      )
+      .run(indexRunId, session.session_id);
+    // Search chunks (lexical). U2 stages chunks during the index pass; here we
+    // publish them into search_chunks and feed both FTS tables — all inside the
+    // same atomic transaction as events, so the index never goes half-written.
+    db.raw
+      .prepare(
+        `INSERT OR IGNORE INTO search_chunks
+           (chunk_id, event_id, session_id, turn_id, harness, chunk_seq, text, content_hash, embed_state)
+         SELECT chunk_id, event_id, session_id, turn_id, harness, chunk_seq, text, content_hash, embed_state
+         FROM staged_search_chunks
+         WHERE index_run_id = ?`,
+      )
+      .run(indexRunId);
+    if (db.ftsAvailable) {
+      db.raw
+        .prepare(
+          `INSERT INTO fts_words(rowid, text)
+           SELECT chunk_id, text FROM staged_search_chunks WHERE index_run_id = ?`,
+        )
+        .run(indexRunId);
+      db.raw
+        .prepare(
+          `INSERT INTO fts_tri(rowid, text)
+           SELECT chunk_id, text FROM staged_search_chunks WHERE index_run_id = ?`,
+        )
+        .run(indexRunId);
+    }
+    // Mark this session lexically up to date so the backfill (U6) skips it.
+    db.raw
+      .prepare(
+        `INSERT INTO search_backfill_state (session_id, mtime_ms, lexical_done)
+         VALUES (?, ?, 1)
+         ON CONFLICT(session_id) DO UPDATE SET mtime_ms = excluded.mtime_ms, lexical_done = 1`,
+      )
+      .run(session.session_id, session.mtime_ms);
+    markDiscoveredSessionIndexed(db, input.harness, input.rawPath, input.state ?? 'hot');
+    db.raw
+      .prepare(
+        `UPDATE index_runs
+         SET state = 'published', finished_at = datetime('now'), error_message = NULL
+         WHERE index_run_id = ?`,
+      )
+      .run(indexRunId);
+    cleanupStagedRows(db, indexRunId);
+  })();
 }
 
 // ── Context snapshot writes ─────────────────────────────────────────────────

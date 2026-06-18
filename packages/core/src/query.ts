@@ -2,6 +2,9 @@
 // these functions. Tests can hit the same functions directly.
 
 import type { TracebenchDb } from './db.js';
+import { gunzipSync } from 'node:zlib';
+import { createReadStream } from 'node:fs';
+import { createInterface } from 'node:readline';
 import type {
   CanonicalEvent,
   EventTokens,
@@ -44,7 +47,10 @@ interface EventRow {
   raw_json: string;
 }
 
-function rowToEvent(r: EventRow): CanonicalEvent {
+function rowToEvent(db: TracebenchDb, r: EventRow): CanonicalEvent {
+  const content = r.content_json == null ? null : resolvePayloadRef(db, JSON.parse(r.content_json));
+  const tool = resolveToolPayloadRefs(db, JSON.parse(r.tool_json) as EventTool);
+  const raw = resolvePayloadRef(db, JSON.parse(r.raw_json));
   return {
     event_id: r.event_id,
     session_id: r.session_id,
@@ -59,11 +65,48 @@ function rowToEvent(r: EventRow): CanonicalEvent {
     cost_usd: r.cost_usd,
     cost_method: r.cost_method as CanonicalEvent['cost_method'],
     duration_ms: r.duration_ms,
-    content: r.content_json == null ? null : JSON.parse(r.content_json),
-    tool: JSON.parse(r.tool_json) as EventTool,
+    content: content as CanonicalEvent['content'],
+    tool,
     metadata: JSON.parse(r.metadata_json),
-    raw: JSON.parse(r.raw_json),
+    raw: raw as CanonicalEvent['raw'],
   };
+}
+
+interface PayloadRef {
+  _tracebench_payload: 'ref';
+  payload_id: string;
+}
+
+function isPayloadRef(value: unknown): value is PayloadRef {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as { _tracebench_payload?: unknown })._tracebench_payload === 'ref' &&
+    typeof (value as { payload_id?: unknown }).payload_id === 'string'
+  );
+}
+
+function resolveToolPayloadRefs(db: TracebenchDb, tool: EventTool): EventTool {
+  return {
+    ...tool,
+    input: resolvePayloadRef(db, tool.input) as EventTool['input'],
+    output: resolvePayloadRef(db, tool.output) as EventTool['output'],
+  };
+}
+
+function resolvePayloadRef(db: TracebenchDb, value: unknown): unknown {
+  if (!isPayloadRef(value)) return value;
+  const row = db.raw
+    .prepare('SELECT codec, body FROM event_payloads WHERE payload_id = ?')
+    .get(value.payload_id) as { codec: string; body: Buffer } | undefined;
+  if (!row) {
+    return { ...value, missing: true };
+  }
+  const body =
+    row.codec === 'gzip'
+      ? gunzipSync(row.body).toString('utf8')
+      : Buffer.from(row.body).toString('utf8');
+  return JSON.parse(body);
 }
 
 interface SessionRow {
@@ -189,7 +232,134 @@ export function getSessionEvents(
   const rows = db.raw
     .prepare('SELECT * FROM events WHERE session_id = ? ORDER BY seq ASC')
     .all(sessionId) as EventRow[];
-  return rows.map(rowToEvent);
+  return rows.map((r) => rowToEvent(db, r));
+}
+
+export interface EventRawResult {
+  event: CanonicalEvent;
+  raw: unknown;
+  provenance:
+    | {
+        kind: 'stored';
+        available: true;
+      }
+    | {
+        kind: 'source_ref';
+        available: true;
+        raw_path: string;
+        line: number;
+      }
+    | {
+        kind: 'source_ref';
+        available: false;
+        raw_path?: string;
+        line?: number;
+        reason: string;
+      };
+}
+
+interface RawSourceRef {
+  _tracebench_raw: 'source_ref';
+  raw_path?: unknown;
+  line?: unknown;
+}
+
+function isRawSourceRef(value: unknown): value is RawSourceRef {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as { _tracebench_raw?: unknown })._tracebench_raw === 'source_ref'
+  );
+}
+
+export async function getEventRaw(
+  db: TracebenchDb,
+  sessionId: string,
+  eventId: string,
+): Promise<EventRawResult | null> {
+  const row = db.raw
+    .prepare('SELECT * FROM events WHERE session_id = ? AND event_id = ?')
+    .get(sessionId, eventId) as EventRow | undefined;
+  if (!row) return null;
+  const event = rowToEvent(db, row);
+  if (!isRawSourceRef(event.raw)) {
+    return {
+      event,
+      raw: event.raw,
+      provenance: { kind: 'stored', available: true },
+    };
+  }
+
+  const rawPath = typeof event.raw.raw_path === 'string' ? event.raw.raw_path : undefined;
+  const line =
+    typeof event.raw.line === 'number' && Number.isFinite(event.raw.line)
+      ? Math.floor(event.raw.line)
+      : undefined;
+  if (!rawPath || !line || line < 1) {
+    return {
+      event,
+      raw: event.raw,
+      provenance: {
+        kind: 'source_ref',
+        available: false,
+        raw_path: rawPath,
+        line,
+        reason: 'source locator is not available for this event',
+      },
+    };
+  }
+
+  const sourceLine = await readJsonlLine(rawPath, line);
+  if (sourceLine == null) {
+    return {
+      event,
+      raw: event.raw,
+      provenance: {
+        kind: 'source_ref',
+        available: false,
+        raw_path: rawPath,
+        line,
+        reason: 'source file or line is no longer available',
+      },
+    };
+  }
+
+  let parsed: unknown = sourceLine;
+  try {
+    parsed = JSON.parse(sourceLine);
+  } catch {
+    // Keep the exact line text if it is not valid JSON.
+  }
+  return {
+    event,
+    raw: parsed,
+    provenance: {
+      kind: 'source_ref',
+      available: true,
+      raw_path: rawPath,
+      line,
+    },
+  };
+}
+
+async function readJsonlLine(path: string, targetLine: number): Promise<string | null> {
+  return new Promise((resolve) => {
+    const stream = createReadStream(path, { encoding: 'utf8' });
+    stream.on('error', () => resolve(null));
+    const rl = createInterface({ input: stream, crlfDelay: Infinity });
+    let lineNo = 0;
+    rl.on('line', (line) => {
+      lineNo++;
+      if (lineNo === targetLine) {
+        rl.close();
+        stream.destroy();
+        resolve(line);
+      }
+    });
+    rl.on('close', () => {
+      if (lineNo < targetLine) resolve(null);
+    });
+  });
 }
 
 export function getSessionTurns(db: TracebenchDb, sessionId: string): Turn[] {

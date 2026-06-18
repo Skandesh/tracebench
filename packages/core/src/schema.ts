@@ -6,6 +6,14 @@ export const CANONICAL_SCHEMA_VERSION = '0.1.0';
 
 export type Harness = 'claude_code' | 'opencode' | 'codex' | 'cursor';
 
+export type DiscoveredSessionIndexState =
+  | 'discovered'
+  | 'indexing'
+  | 'hot'
+  | 'warm'
+  | 'raw_archived'
+  | 'error';
+
 export type Role = 'user' | 'assistant' | 'system' | 'tool';
 
 export type EventType =
@@ -24,6 +32,10 @@ export interface EventSource {
   harness: Harness;
   format_version: string;
   raw_path: string;
+  /** 1-based JSONL line number when the adapter can identify the source row. */
+  line?: number;
+  /** 0-based raw record index when line numbers are unavailable or synthetic. */
+  raw_index?: number;
 }
 
 export interface EventTokens {
@@ -105,6 +117,20 @@ export interface Session {
   raw_path: string; // absolute path to source file/dir
   format_version: string;
   mtime_ms: number; // for incremental re-index
+}
+
+// Lightweight manifest entry: lets Tracebench know what exists on disk
+// without fully materializing every session into the hot event index.
+export interface DiscoveredSession {
+  harness: Harness;
+  session_id: string;
+  raw_path: string;
+  format_version: string;
+  source_size: number;
+  mtime_ms: number;
+  index_state: DiscoveredSessionIndexState;
+  indexed_at: string | null;
+  error_message: string | null;
 }
 
 // Derived/aggregated fields — not stored, computed at query time.

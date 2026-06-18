@@ -19,15 +19,30 @@ export type RawClaudeCodeEvent = Record<string, unknown> & {
   message?: unknown;
 };
 
+export interface RawClaudeCodeRecord {
+  raw: RawClaudeCodeEvent;
+  line: number;
+}
+
 export async function* streamSession(
   filePath: string,
 ): AsyncIterable<RawClaudeCodeEvent> {
+  for await (const record of streamSessionRecords(filePath)) {
+    yield record.raw;
+  }
+}
+
+export async function* streamSessionRecords(
+  filePath: string,
+): AsyncIterable<RawClaudeCodeRecord> {
   const stream = createReadStream(filePath, { encoding: 'utf8' });
   const rl = createInterface({ input: stream, crlfDelay: Infinity });
+  let lineNo = 0;
   for await (const line of rl) {
+    lineNo++;
     if (!line.trim()) continue;
     try {
-      yield JSON.parse(line) as RawClaudeCodeEvent;
+      yield { raw: JSON.parse(line) as RawClaudeCodeEvent, line: lineNo };
     } catch {
       // Skip malformed lines silently. Real sessions occasionally have a
       // truncated trailing line if the harness was killed mid-write.

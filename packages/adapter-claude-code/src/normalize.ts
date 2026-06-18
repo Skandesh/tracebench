@@ -452,7 +452,7 @@ export function normalizeSession(
 }
 
 // Convenience: combine parse + normalize.
-import { parseSession } from './parse.js';
+import { parseSession, streamSessionRecords } from './parse.js';
 
 export async function loadSession(filePath: string, opts: { formatVersion?: string } = {}): Promise<NormalizeResult> {
   const raws = await parseSession(filePath);
@@ -460,4 +460,56 @@ export async function loadSession(filePath: string, opts: { formatVersion?: stri
     rawPath: filePath,
     formatVersion: opts.formatVersion ?? '2025-q2',
   });
+}
+
+export async function* streamLoadSession(
+  filePath: string,
+  opts: { formatVersion?: string; batchSize?: number } = {},
+): AsyncIterable<
+  | { type: 'session'; session: Session }
+  | { type: 'events'; events: CanonicalEvent[] }
+> {
+  const records: Array<{ raw: RawClaudeCodeEvent; line: number }> = [];
+  for await (const record of streamSessionRecords(filePath)) {
+    records.push(record);
+  }
+  const lineByRaw = new WeakMap<object, number>();
+  const lineByUuid = new Map<string, number>();
+  for (const record of records) {
+    lineByRaw.set(record.raw, record.line);
+    if (typeof record.raw.uuid === 'string') lineByUuid.set(record.raw.uuid, record.line);
+  }
+  const normalized = normalizeSession(
+    records.map((r) => r.raw),
+    {
+      rawPath: filePath,
+      formatVersion: opts.formatVersion ?? '2025-q2',
+    },
+  );
+  yield { type: 'session', session: normalized.session };
+  const batchSize = Math.max(1, opts.batchSize ?? 500);
+  let batch: CanonicalEvent[] = [];
+  for (const event of normalized.events) {
+    batch.push(attachSourceLocator(event, lineByRaw, lineByUuid));
+    if (batch.length >= batchSize) {
+      yield { type: 'events', events: batch };
+      batch = [];
+    }
+  }
+  if (batch.length > 0) yield { type: 'events', events: batch };
+}
+
+function attachSourceLocator(
+  event: CanonicalEvent,
+  lineByRaw: WeakMap<object, number>,
+  lineByUuid: Map<string, number>,
+): CanonicalEvent {
+  let line: number | undefined;
+  if (typeof event.raw === 'object' && event.raw !== null) {
+    line = lineByRaw.get(event.raw);
+    const refUuid = (event.raw as { _ref_uuid?: unknown })._ref_uuid;
+    if (line == null && typeof refUuid === 'string') line = lineByUuid.get(refUuid);
+  }
+  if (line == null) return event;
+  return { ...event, source: ({ ...(event.source as unknown as Record<string, unknown>), line } as unknown as CanonicalEvent['source']) };
 }

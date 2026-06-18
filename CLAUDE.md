@@ -47,6 +47,16 @@ Key invariants:
 
 Don't re-introduce a GROUP BY at query time. It was 5.8s on a real DB.
 
+### Search is its own index, populated at index time
+
+Body search (find a thread by what was said/done inside it) is **not** the `listSessions` `LIKE` filter — that stays metadata-only. Search has its own pipeline in `packages/core`:
+
+- `search-chunks.ts` extracts per-event chunks (deterministic `chunk_id = hash(event_id, chunk_seq)` — *not* `events.seq`); the indexer stages them and `publishIndexRun` writes `search_chunks` + two **contentless FTS5** tables (`fts_words` porter, `fts_tri` trigram) in the same atomic transaction. `ensureSearchFts()` creates the FTS tables outside the migration with a `contentless_delete` probe that degrades rather than bricking startup.
+- `search.ts` (`searchEvents`, async) sanitizes MATCH input, fuses the FTS legs (+ the optional vector leg) with inline RRF, and joins the session row in one batched `WHERE session_id IN (…)` — no GROUP BY. Snippets are highlighted in JS with control-char sentinels (FTS5 `snippet()` is a no-op on contentless tables); the UI renders them as text nodes, never `innerHTML`.
+- **Semantic is opt-in** (`--embeddings`): `sqlite-vec` + `@huggingface/transformers` are `optionalDependencies` loaded via guarded `require`; `vec_chunks` (float[384]) is created only when the extension loads, all vector reads/writes gated on `db.vectorsAvailable`. The embedding drain and lexical backfill run as fire-and-forget background loops after indexing. **If you change the chunker, bump `CHUNKER_VERSION`** (recorded in `vec_meta`) so embeddings rebuild.
+
+When you touch search, populate inside the existing stage→publish path (never a query-time backfill), and keep all the FTS/vector writes consistent with `deleteSessionEvents`/`cleanupStagedRows`.
+
 ### UI fetches once, filters client-side
 
 `App.tsx` fetches the full session list on mount with no `?harness=` filter. Harness/text filtering happens in a `useMemo`. **Don't add server-side filter calls back** — they break tab counts and re-introduce the perceived sluggishness.

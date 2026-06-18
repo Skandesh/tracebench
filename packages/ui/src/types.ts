@@ -2,7 +2,7 @@
 // build-time dependency on @tracebench/core types; the API is the contract.
 
 export type Harness = 'claude_code' | 'opencode' | 'codex' | 'cursor';
-export type ViewMode = 'timeline' | 'dashboard';
+export type ViewMode = 'timeline' | 'dashboard' | 'search';
 export type Role = 'user' | 'assistant' | 'system' | 'tool';
 export type EventType =
   | 'message'
@@ -35,7 +35,7 @@ export interface CanonicalEvent {
   turn_id: string;
   parent_event_id: string | null;
   timestamp: string;
-  source: { harness: Harness; format_version: string; raw_path: string };
+  source: { harness: Harness; format_version: string; raw_path: string; line?: number; raw_index?: number };
   role: Role;
   event_type: EventType;
   model: string | null;
@@ -76,12 +76,90 @@ export interface Session {
   format_version: string;
   mtime_ms: number;
   aggregates: SessionAggregates;
+  index_state?: DiscoveredSessionIndexState;
+  source_size?: number;
+  indexed_at?: string | null;
+  error_message?: string | null;
+  indexed?: boolean;
+}
+
+export type DiscoveredSessionIndexState =
+  | 'discovered'
+  | 'indexing'
+  | 'hot'
+  | 'warm'
+  | 'raw_archived'
+  | 'error';
+
+export interface DiscoveredSession {
+  harness: Harness;
+  session_id: string;
+  raw_path: string;
+  format_version: string;
+  source_size: number;
+  mtime_ms: number;
+  index_state: DiscoveredSessionIndexState;
+  indexed_at: string | null;
+  error_message: string | null;
+}
+
+export interface StorageReport {
+  db: {
+    total_bytes: number;
+    wal_bytes: number;
+  };
+  discovery: {
+    total_sessions: number;
+    indexed_sessions: number;
+    manifest_sessions: number;
+    per_harness: Record<
+      string,
+      {
+        discovered: number;
+        indexed: number;
+        manifest: number;
+        states: Record<string, number>;
+      }
+    >;
+  };
+  payload_bytes: {
+    total_json: number;
+    external_payload_count: number;
+    external_payload_compressed_bytes: number;
+  };
+  index_runs?: {
+    total: number;
+    indexing: number;
+    published: number;
+    error: number;
+  };
 }
 
 export interface ToolCount {
   tool_name: string;
   count: number;
   errors: number;
+}
+
+// Cross-session search (mirrors the /api/search response shape).
+export interface SearchMatch {
+  chunk_id: number;
+  event_id: string;
+  turn_id: string | null;
+  snippet: string;
+  source: 'lexical' | 'semantic';
+}
+
+export interface SearchResultGroup {
+  session: Session;
+  score: number;
+  matches: SearchMatch[];
+}
+
+export interface SearchEventsResult {
+  results: SearchResultGroup[];
+  total: number;
+  semanticAvailable: boolean;
 }
 
 export interface Turn {

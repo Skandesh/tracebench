@@ -11,6 +11,8 @@ interface Props {
   sessions: Session[];
   view: ViewMode;
   setView: (v: ViewMode) => void;
+  /** Escalate the filter box to full-text search (Enter). */
+  onSubmitSearch?: () => void;
 }
 
 const HARNESSES: { id: Harness | 'all'; label: string; live: boolean }[] = [
@@ -21,7 +23,7 @@ const HARNESSES: { id: Harness | 'all'; label: string; live: boolean }[] = [
   { id: 'cursor', label: HARNESS_LABELS.cursor, live: true },
 ];
 
-export function TopBar({ search, setSearch, filterHarness, setFilterHarness, sessions, view, setView }: Props) {
+export function TopBar({ search, setSearch, filterHarness, setFilterHarness, sessions, view, setView, onSubmitSearch }: Props) {
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: sessions.length };
     for (const s of sessions) {
@@ -45,16 +47,22 @@ export function TopBar({ search, setSearch, filterHarness, setFilterHarness, ses
         <div className="tb-brand-ver">0.1.0-alpha</div>
       </div>
 
-      <div className="tb-search-wrap">
+      <div className="tb-search-wrap" data-search-active={view === 'search' ? '1' : '0'}>
         <span className="tb-search-icon"><Icons.Search size={13} /></span>
         <input
           id="tb-search"
           className="tb-search"
-          placeholder="Search sessions, files, commands…"
+          placeholder="Filter sessions… (Enter to search contents)"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              onSubmitSearch?.();
+            }
+          }}
         />
-        <span className="tb-kbd-hint"><kbd>/</kbd></span>
+        <span className="tb-kbd-hint">{view === 'search' ? <kbd>esc</kbd> : <kbd>/</kbd>}</span>
       </div>
 
       <div className="tb-top-right">

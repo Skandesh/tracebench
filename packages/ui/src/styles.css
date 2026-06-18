@@ -108,7 +108,7 @@ html, body {
 
 .tb-app {
   display: grid;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto auto 1fr;
   height: 100vh;
   background: var(--bg);
 }
@@ -221,6 +221,42 @@ kbd {
   min-width: 0;
 }
 
+.tb-storage-strip {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--text-faint);
+  font-family: 'Geist Mono', ui-monospace, monospace;
+  font-size: 10.5px;
+}
+
+.tb-storage-strip button {
+  margin-left: auto;
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-mute);
+  border-radius: 999px;
+  padding: 3px 8px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tb-storage-strip button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.tb-storage-strip button:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
 .tb-harness-tabs {
   display: flex;
   flex-wrap: nowrap;
@@ -248,10 +284,13 @@ kbd {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex: 0 0 auto;            /* never shrink — the row scrolls instead of wrapping */
+  white-space: nowrap;       /* keep "Claude Code" + count on one line */
   color: var(--text-mute);
   font: inherit;
   font-size: 11.5px;
   font-weight: 500;
+  line-height: 1;
   border-radius: 4px;
   cursor: pointer;
 }
@@ -263,6 +302,7 @@ kbd {
 .tb-harness-count {
   font-family: 'Geist Mono', ui-monospace, monospace;
   font-size: 10px;
+  font-variant-numeric: tabular-nums;
   color: var(--text-faint);
 }
 
@@ -526,6 +566,13 @@ kbd {
   position: relative;
 }
 .tb-sess:hover { background: var(--bg-elev); }
+.tb-sess[data-indexed="0"] {
+  cursor: default;
+  opacity: 0.92;
+}
+.tb-sess[data-indexed="0"]:hover {
+  background: transparent;
+}
 .tb-sess[data-active="1"] {
   background: var(--bg-elev-2);
   border-color: var(--border);
@@ -548,10 +595,28 @@ kbd {
   font-family: 'Geist Mono', monospace;
   font-size: 10px;
   color: var(--text-faint);
-  flex: 1;
   letter-spacing: 0;
 }
+.tb-sess-state {
+  font-family: 'Geist Mono', monospace;
+  font-size: 9.5px;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 5px;
+  line-height: 16px;
+}
+.tb-sess-state-discovered,
+.tb-sess-state-indexing {
+  color: var(--accent);
+  border-color: oklch(from var(--accent) l c h / 0.45);
+}
+.tb-sess-state-error {
+  color: var(--color-error-hover);
+  border-color: oklch(from var(--color-error) l c h / 0.45);
+}
 .tb-sess-time {
+  margin-left: auto;
   font-family: 'Geist Mono', monospace;
   font-size: 10.5px;
   color: var(--text-faint);
@@ -631,6 +696,27 @@ kbd {
 }
 .tb-sess-err-btn:hover {
   text-decoration-color: var(--color-error-hover);
+}
+
+.tb-sess-index-btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--text-mute);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tb-sess-index-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.tb-sess-index-btn:disabled {
+  opacity: 0.65;
+  cursor: wait;
 }
 
 /* ── Session header (center pane) ────────────────────────────────────────── */
@@ -2296,3 +2382,93 @@ kbd {
     text-align: left;
   }
 }
+
+/* ── Search surface (U5) ─────────────────────────────────────────────── */
+.tb-search-surface {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--pad-y) var(--pad-x);
+}
+.tb-search-idle {
+  max-width: 560px;
+  margin: 12vh auto 0;
+  text-align: center;
+  color: var(--text-mute);
+}
+.tb-search-idle-hint { color: var(--text-faint); font-size: 13px; margin-top: 8px; }
+.tb-search-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-mute);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+.tb-search-spinner {
+  width: 12px; height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: tb-spin 0.7s linear infinite;
+}
+@keyframes tb-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .tb-search-spinner { animation: none; } }
+.tb-search-slow { color: var(--text-faint); font-style: italic; }
+.tb-search-lexnote {
+  margin-left: auto;
+  color: var(--text-faint);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+  font-size: 11px;
+}
+.tb-search-results { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.tb-search-result {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.tb-search-result:hover { background: var(--bg-hover); border-color: var(--border); }
+.tb-search-result-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tb-harness-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--badge, var(--accent));
+  border: 1px solid var(--badge, var(--border));
+  border-radius: var(--radius-sm);
+  padding: 0 6px;
+  opacity: 0.95;
+}
+.tb-search-result-title { font-weight: 600; color: var(--text); }
+.tb-search-result-meta { color: var(--text-faint); font-size: 12px; }
+.tb-search-snippets { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; }
+.tb-search-snippet {
+  margin: 0;
+  color: var(--text-mute);
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.tb-search-snippet mark {
+  background: oklch(0.82 0.13 130 / 0.22);
+  color: var(--text);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+.tb-match-kind { color: var(--accent); font-weight: 700; }
+.tb-search-result-actions { margin-top: 8px; }
+.tb-resume-btn {
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text-mute);
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.tb-resume-btn:hover { background: var(--bg-hover); color: var(--text); border-color: var(--border); }

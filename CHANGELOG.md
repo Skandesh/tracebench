@@ -5,6 +5,14 @@ All notable changes to tracebench are documented here. Format follows [Keep a Ch
 > **How releases work:** edit `[Unreleased]` below as you work. Running `pnpm release <version> --skip-publish` (see `scripts/release.mjs`) promotes it to a dated `[X.Y.Z]` section, bumps all package versions, commits, tags, and pushes.
 
 ## [Unreleased]
+### Added
+- **Cross-harness search** — find threads by *what was said and done inside them* (message content, thinking, tool inputs/outputs, error text), across all four harnesses, ranked by relevance with highlighted snippets and click-to-jump. New `/api/search` endpoint and a dedicated search surface (type in the filter box and press **Enter**; `Esc` exits). Each result offers a **resume affordance** — the harness-native resume command (`claude --resume <id>`, `codex resume <id>`, …) to copy.
+  - **Lexical (default, zero new dependencies):** a dual SQLite **FTS5** index — a `trigram` leg for exact substring/code/path/error matching plus a `porter` leg for ranked natural-language relevance — populated at index time, with a one-time background backfill so existing databases gain search automatically. Query input is sanitized so FTS operator characters never break a search.
+  - **Semantic (opt-in via `--embeddings`):** local embeddings (`@huggingface/transformers`, all-MiniLM-L6-v2) stored in `sqlite-vec`, fused with the lexical results via Reciprocal Rank Fusion so paraphrased queries ("how did we fix the auth bug") surface the right thread. Runs fully local; degrades cleanly to lexical-only where the optional native dependency, platform binary, or model is unavailable. `--max-vector-chunks` bounds the vector budget.
+  - **Note:** enabling `--embeddings` adds an ONNX runtime and downloads a ~23 MB model on first use, and the search index grows the database (trigram index + chunk text); semantic search is off by default to keep the lean `npx tracebench` experience intact.
+
+### Changed
+- **Bounded startup indexing + large-session safety** — startup indexes a bounded, fresh working set instead of every historical session, and very large JSONL sessions / explicit backfills are handled without unsafe whole-session materialization. Staged stage-then-publish indexing keeps visible sessions intact if a run fails, and raw fidelity (turns, tool links, tokens, provenance) is preserved via source refs + externalized payloads.
 
 ## [0.3.1] — 2026-06-05
 ### Added

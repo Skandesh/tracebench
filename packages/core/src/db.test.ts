@@ -5,6 +5,27 @@ import {
   insertEvents,
   deleteSessionEvents,
   upsertContextSnapshot,
+  upsertDiscoveredSession,
+  markDiscoveredSessionIndexed,
+  markDiscoveredSessionError,
+  markDiscoveredSessionIndexing,
+  getDiscoveredSession,
+  listDiscoveredSessions,
+  beginIndexRun,
+  failIndexRun,
+  publishIndexRun,
+  stageEvents,
+  stageSession,
+  insertSearchChunk,
+  stageSearchChunks,
+  deleteSessionSearchChunks,
+  chunkIdFor,
+  EMBEDDING_DIM,
+  insertVector,
+  countVectors,
+  getVecMeta,
+  setVecMeta,
+  type SearchChunkRow,
   type TracebenchDb,
 } from './db.js';
 import type { CanonicalEvent, Session, ContextSnapshot } from './schema.js';
@@ -15,7 +36,11 @@ import {
   getSessionTurns,
   computeSessionAggregates,
   getToolCounts,
+  getEventRaw,
 } from './query.js';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -83,6 +108,12 @@ describe('migrations', () => {
     expect(names).toContain('sessions');
     expect(names).toContain('events');
     expect(names).toContain('context_snapshots');
+    expect(names).toContain('discovered_sessions');
+    expect(names).toContain('event_payloads');
+    expect(names).toContain('event_payload_refs');
+    expect(names).toContain('index_runs');
+    expect(names).toContain('staged_sessions');
+    expect(names).toContain('staged_events');
     expect(names).toContain('_migrations');
   });
 
@@ -141,6 +172,228 @@ describe('session + event roundtrip', () => {
     expect(turns.length).toBe(2);
     expect(turns[0]!.events.length).toBe(2);
     expect(turns[1]!.events.length).toBe(1);
+  });
+
+  it('can store raw JSON as a source reference instead of duplicating full raw payloads', () => {
+    upsertSession(db, makeSession());
+    insertEvents(
+      db,
+      [
+        makeEvent({
+          raw: { massive: 'x'.repeat(20_000), keep_me_out_of_hot_rows: true },
+        }),
+      ],
+      0,
+      { rawMode: 'reference' },
+    );
+    const got = getSessionEvents(db, 'sess-1')[0]!;
+    expect(got.raw).toEqual({
+      _tracebench_raw: 'source_ref',
+      raw_path: '/x/y.jsonl',
+      harness: 'claude_code',
+      event_id: got.event_id,
+      timestamp: got.timestamp,
+    });
+    const row = db.raw
+      .prepare('SELECT length(raw_json) AS n FROM events WHERE event_id = ?')
+      .get(got.event_id) as { n: number };
+    expect(row.n).toBeLessThan(300);
+  });
+
+  it('stores actionable source locators in raw source references', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tracebench-raw-ref-'));
+    const rawPath = join(dir, 'source.jsonl');
+    writeFileSync(rawPath, '{"type":"first"}\n{"type":"second"}\n');
+    upsertSession(db, makeSession({ raw_path: rawPath }));
+    insertEvents(
+      db,
+      [
+        makeEvent({
+          event_id: 'evt-with-line',
+          source: {
+            harness: 'claude_code',
+            format_version: '1',
+            raw_path: rawPath,
+            line: 2,
+          },
+          raw: { type: 'second' },
+        }),
+      ],
+      0,
+      { rawMode: 'reference' },
+    );
+
+    const got = await getEventRaw(db, 'sess-1', 'evt-with-line');
+    expect(got?.provenance).toMatchObject({
+      kind: 'source_ref',
+      available: true,
+      raw_path: rawPath,
+      line: 2,
+    });
+    expect(got?.raw).toEqual({ type: 'second' });
+  });
+
+  it('externalizes and deduplicates large payloads while preserving query fidelity', () => {
+    upsertSession(db, makeSession());
+    const output = 'same-output\n'.repeat(1000);
+    insertEvents(
+      db,
+      [
+        makeEvent({
+          event_id: 'large-1',
+          tool: { name: 'Bash', input: { command: 'a' }, output, status: 'success', error_message: null },
+        }),
+        makeEvent({
+          event_id: 'large-2',
+          tool: { name: 'Bash', input: { command: 'b' }, output, status: 'success', error_message: null },
+        }),
+      ],
+      0,
+      { payloadMode: 'external', payloadThresholdBytes: 100 },
+    );
+
+    const events = getSessionEvents(db, 'sess-1');
+    expect(events.map((e) => e.tool.output)).toEqual([output, output]);
+
+    const payloadCount = db.raw
+      .prepare('SELECT COUNT(*) AS n FROM event_payloads')
+      .get() as { n: number };
+    const refCount = db.raw
+      .prepare('SELECT COUNT(*) AS n FROM event_payload_refs')
+      .get() as { n: number };
+    const hotRows = db.raw
+      .prepare('SELECT tool_json FROM events ORDER BY seq ASC')
+      .all() as { tool_json: string }[];
+    expect(payloadCount.n).toBe(1);
+    expect(refCount.n).toBe(2);
+    expect(hotRows[0]!.tool_json.length).toBeLessThan(400);
+  });
+});
+
+describe('discovered session manifest', () => {
+  it('tracks discovered sessions and preserves hot state when the source is unchanged', () => {
+    upsertDiscoveredSession(db, {
+      harness: 'codex',
+      session_id: 'codex-1',
+      raw_path: '/rollout.jsonl',
+      format_version: '1',
+      source_size: 1234,
+      mtime_ms: 1000,
+    });
+    expect(listDiscoveredSessions(db)).toHaveLength(1);
+    expect(getDiscoveredSession(db, 'codex', '/rollout.jsonl')!.index_state).toBe('discovered');
+
+    markDiscoveredSessionIndexed(db, 'codex', '/rollout.jsonl', 'hot');
+    expect(getDiscoveredSession(db, 'codex', '/rollout.jsonl')!.index_state).toBe('hot');
+
+    upsertDiscoveredSession(db, {
+      harness: 'codex',
+      session_id: 'codex-1',
+      raw_path: '/rollout.jsonl',
+      format_version: '1',
+      source_size: 1234,
+      mtime_ms: 1000,
+    });
+    expect(getDiscoveredSession(db, 'codex', '/rollout.jsonl')!.index_state).toBe('hot');
+  });
+
+  it('resets stale or errored manifest rows to discovered when the source changes', () => {
+    upsertDiscoveredSession(db, {
+      harness: 'claude_code',
+      session_id: 'sess-1',
+      raw_path: '/sess-1.jsonl',
+      format_version: '1',
+      source_size: 100,
+      mtime_ms: 1000,
+    });
+    markDiscoveredSessionError(db, 'claude_code', '/sess-1.jsonl', 'bad json');
+    expect(getDiscoveredSession(db, 'claude_code', '/sess-1.jsonl')!.index_state).toBe('error');
+
+    upsertDiscoveredSession(db, {
+      harness: 'claude_code',
+      session_id: 'sess-1',
+      raw_path: '/sess-1.jsonl',
+      format_version: '1',
+      source_size: 200,
+      mtime_ms: 2000,
+    });
+    const got = getDiscoveredSession(db, 'claude_code', '/sess-1.jsonl')!;
+    expect(got.index_state).toBe('discovered');
+    expect(got.error_message).toBeNull();
+    expect(got.source_size).toBe(200);
+  });
+
+  it('marks sessions as actively indexing without dropping the manifest row', () => {
+    upsertDiscoveredSession(db, {
+      harness: 'codex',
+      session_id: 'codex-indexing',
+      raw_path: '/indexing.jsonl',
+      format_version: '1',
+      source_size: 100,
+      mtime_ms: 1000,
+    });
+    markDiscoveredSessionIndexing(db, 'codex', '/indexing.jsonl');
+    expect(getDiscoveredSession(db, 'codex', '/indexing.jsonl')!.index_state).toBe('indexing');
+  });
+});
+
+describe('staged index publishing', () => {
+  it('does not expose staged rows until publish', () => {
+    upsertDiscoveredSession(db, {
+      harness: 'claude_code',
+      session_id: 'sess-1',
+      raw_path: '/x/y.jsonl',
+      format_version: '1',
+      source_size: 10,
+      mtime_ms: 1000,
+    });
+    const runId = beginIndexRun(db, {
+      harness: 'claude_code',
+      session_id: 'sess-1',
+      raw_path: '/x/y.jsonl',
+    });
+    const events = [makeEvent({ event_id: 'stage-1' }), makeEvent({ event_id: 'stage-2' })];
+    stageEvents(db, runId, events, 0, { rawMode: 'reference' });
+    stageSession(db, runId, makeSession(), {
+      total_cost_usd: 0,
+      total_input_tokens: 0,
+      total_output_tokens: 0,
+      total_cache_read_tokens: 0,
+      total_cache_create_tokens: 0,
+      total_reasoning_tokens: 0,
+      duration_ms: 0,
+      turn_count: 1,
+      tool_call_count: 0,
+      tool_error_count: 0,
+      message_count: 2,
+    });
+
+    expect(getSession(db, 'sess-1')).toBeNull();
+    expect(getSessionEvents(db, 'sess-1')).toEqual([]);
+
+    publishIndexRun(db, runId, {
+      harness: 'claude_code',
+      rawPath: '/x/y.jsonl',
+      state: 'hot',
+    });
+    expect(getSession(db, 'sess-1')!.title).toBe('Fix bug X');
+    expect(getSessionEvents(db, 'sess-1')).toHaveLength(2);
+    expect(getDiscoveredSession(db, 'claude_code', '/x/y.jsonl')!.index_state).toBe('hot');
+  });
+
+  it('keeps an existing visible session when a staged run fails', () => {
+    upsertSession(db, makeSession({ title: 'old visible' }));
+    insertEvents(db, [makeEvent({ event_id: 'old-event', content: 'old' })]);
+    const runId = beginIndexRun(db, {
+      harness: 'claude_code',
+      session_id: 'sess-1',
+      raw_path: '/x/y.jsonl',
+    });
+    stageEvents(db, runId, [makeEvent({ event_id: 'new-event', content: 'new' })]);
+    failIndexRun(db, runId, 'boom');
+
+    expect(getSession(db, 'sess-1')!.title).toBe('old visible');
+    expect(getSessionEvents(db, 'sess-1').map((e) => e.event_id)).toEqual(['old-event']);
   });
 });
 
@@ -261,5 +514,180 @@ describe('cascade delete', () => {
     expect(getSessionEvents(db, 'sess-1').length).toBe(2);
     deleteSessionEvents(db, 'sess-1');
     expect(getSessionEvents(db, 'sess-1').length).toBe(0);
+  });
+});
+
+function makeChunk(overrides: Partial<SearchChunkRow> = {}): SearchChunkRow {
+  const event_id = overrides.event_id ?? 'evt-1';
+  const chunk_seq = overrides.chunk_seq ?? 0;
+  return {
+    chunk_id: chunkIdFor(event_id, chunk_seq),
+    event_id,
+    session_id: 'sess-1',
+    turn_id: 'turn-1',
+    harness: 'claude_code',
+    chunk_seq,
+    text: 'the quick brown fox useMemo packages/core/src/db.ts',
+    content_hash: 'h1',
+    ...overrides,
+  };
+}
+
+describe('search index schema (U1)', () => {
+  it('creates v6 tables and FTS is available', () => {
+    const names = (
+      db.raw
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+        .all() as { name: string }[]
+    ).map((t) => t.name);
+    expect(names).toContain('search_chunks');
+    expect(names).toContain('staged_search_chunks');
+    expect(names).toContain('search_backfill_state');
+    expect(db.ftsAvailable).toBe(true);
+    const fts = (
+      db.raw
+        .prepare("SELECT name FROM sqlite_master WHERE name IN ('fts_words','fts_tri')")
+        .all() as { name: string }[]
+    ).map((f) => f.name);
+    expect(fts.sort()).toEqual(['fts_tri', 'fts_words']);
+  });
+
+  it('chunkIdFor is deterministic, distinct per chunk_seq, and a safe integer', () => {
+    expect(chunkIdFor('evt-1', 0)).toBe(chunkIdFor('evt-1', 0));
+    expect(chunkIdFor('evt-1', 0)).not.toBe(chunkIdFor('evt-1', 1));
+    expect(chunkIdFor('evt-1', 0)).not.toBe(chunkIdFor('evt-2', 0));
+    const id = chunkIdFor('evt-1', 0);
+    expect(Number.isSafeInteger(id)).toBe(true);
+    expect(id).toBeGreaterThanOrEqual(0);
+    expect(id).toBeLessThan(2 ** 52);
+  });
+
+  it('insertSearchChunk feeds both FTS tables; contentless_delete is honored', () => {
+    const c = makeChunk();
+    insertSearchChunk(db, c);
+    const wHit = db.raw
+      .prepare("SELECT rowid FROM fts_words WHERE fts_words MATCH 'quick'")
+      .get() as { rowid: number } | undefined;
+    expect(wHit?.rowid).toBe(c.chunk_id);
+    // trigram substring match on a code identifier
+    const tHit = db.raw
+      .prepare("SELECT rowid FROM fts_tri WHERE fts_tri MATCH 'useMemo'")
+      .get() as { rowid: number } | undefined;
+    expect(tHit?.rowid).toBe(c.chunk_id);
+    db.raw.prepare('DELETE FROM fts_words WHERE rowid = ?').run(c.chunk_id);
+    const after = db.raw
+      .prepare("SELECT count(*) n FROM fts_words WHERE fts_words MATCH 'quick'")
+      .get() as { n: number };
+    expect(after.n).toBe(0);
+  });
+
+  it('deleteSessionSearchChunks purges chunks and FTS rows with no orphans', () => {
+    insertSearchChunk(db, makeChunk({ event_id: 'evt-1', chunk_seq: 0 }));
+    insertSearchChunk(db, makeChunk({ event_id: 'evt-2', chunk_seq: 0, text: 'another chunk ENOENT' }));
+    expect((db.raw.prepare('SELECT count(*) n FROM search_chunks').get() as { n: number }).n).toBe(2);
+    deleteSessionSearchChunks(db, 'sess-1');
+    expect((db.raw.prepare('SELECT count(*) n FROM search_chunks').get() as { n: number }).n).toBe(0);
+    const orphan = db.raw
+      .prepare("SELECT count(*) n FROM fts_words WHERE fts_words MATCH 'chunk OR quick'")
+      .get() as { n: number };
+    expect(orphan.n).toBe(0);
+  });
+
+  it('publishIndexRun populates search_chunks + FTS from staged chunks; re-publish is stable', () => {
+    const session = makeSession();
+    const run1 = beginIndexRun(db, {
+      harness: 'claude_code',
+      session_id: session.session_id,
+      raw_path: session.raw_path,
+    });
+    stageSession(db, run1, session, {});
+    stageSearchChunks(db, run1, [makeChunk({ text: 'searchable body text alpha' })]);
+    publishIndexRun(db, run1, { harness: 'claude_code', rawPath: session.raw_path });
+    expect(
+      (
+        db.raw
+          .prepare('SELECT count(*) n FROM search_chunks WHERE session_id = ?')
+          .get(session.session_id) as { n: number }
+      ).n,
+    ).toBe(1);
+    const hit = db.raw
+      .prepare("SELECT rowid FROM fts_words WHERE fts_words MATCH 'alpha'")
+      .get() as { rowid: number } | undefined;
+    expect(hit?.rowid).toBe(chunkIdFor('evt-1', 0));
+
+    const run2 = beginIndexRun(db, {
+      harness: 'claude_code',
+      session_id: session.session_id,
+      raw_path: session.raw_path,
+    });
+    stageSession(db, run2, session, {});
+    stageSearchChunks(db, run2, [makeChunk({ text: 'searchable body text alpha' })]);
+    publishIndexRun(db, run2, { harness: 'claude_code', rawPath: session.raw_path });
+    expect(
+      (
+        db.raw
+          .prepare('SELECT count(*) n FROM search_chunks WHERE session_id = ?')
+          .get(session.session_id) as { n: number }
+      ).n,
+    ).toBe(1);
+    expect(
+      (db.raw.prepare("SELECT count(*) n FROM fts_words WHERE fts_words MATCH 'alpha'").get() as {
+        n: number;
+      }).n,
+    ).toBe(1);
+  });
+});
+
+function vec384(prefix: number[]): number[] {
+  const v = new Array(EMBEDDING_DIM).fill(0);
+  for (let i = 0; i < prefix.length && i < EMBEDDING_DIM; i++) v[i] = prefix[i];
+  return v;
+}
+
+describe('vector store (U7)', () => {
+  it('does not create vec_chunks unless vectors are enabled; vec ops are safe no-ops', () => {
+    expect(db.vectorsAvailable).toBe(false);
+    expect(db.raw.prepare("SELECT name FROM sqlite_master WHERE name='vec_chunks'").get()).toBeFalsy();
+    expect(countVectors(db)).toBe(0);
+    expect(() => insertVector(db, 1, 'claude_code', vec384([1]))).not.toThrow();
+    expect(getVecMeta(db, 'embedding_dim')).toBeNull();
+  });
+
+  it('loads the extension and creates vec_chunks + vec_meta when enabled', () => {
+    const vdb = openDb({ path: ':memory:', enableVectors: true });
+    try {
+      expect(vdb.vectorsAvailable).toBe(true);
+      expect(vdb.raw.prepare("SELECT name FROM sqlite_master WHERE name='vec_chunks'").get()).toBeTruthy();
+      expect(getVecMeta(vdb, 'embedding_dim')).toBe(String(EMBEDDING_DIM));
+      setVecMeta(vdb, 'model_id', 'test-model');
+      expect(getVecMeta(vdb, 'model_id')).toBe('test-model');
+    } finally {
+      vdb.close();
+    }
+  });
+
+  it('inserts vectors, answers KNN, and clears them on session purge', () => {
+    const vdb = openDb({ path: ':memory:', enableVectors: true });
+    try {
+      upsertSession(vdb, makeSession({ session_id: 'vs' }));
+      const c = makeChunk({ event_id: 'e', session_id: 'vs', text: 'x' });
+      insertSearchChunk(vdb, c);
+      insertVector(vdb, c.chunk_id, 'claude_code', vec384([1, 0, 0]));
+      const c2 = makeChunk({ event_id: 'e2', session_id: 'vs', text: 'y' });
+      insertSearchChunk(vdb, c2);
+      insertVector(vdb, c2.chunk_id, 'codex', vec384([0, 1, 0]));
+      expect(countVectors(vdb)).toBe(2);
+
+      const buf = Buffer.from(Float32Array.from(vec384([1, 0, 0])).buffer);
+      const rows = vdb.raw
+        .prepare('SELECT chunk_id, distance FROM vec_chunks WHERE embedding MATCH ? AND k = 2 ORDER BY distance')
+        .all(buf) as { chunk_id: number | bigint; distance: number }[];
+      expect(Number(rows[0].chunk_id)).toBe(c.chunk_id);
+
+      deleteSessionSearchChunks(vdb, 'vs');
+      expect(countVectors(vdb)).toBe(0);
+    } finally {
+      vdb.close();
+    }
   });
 });

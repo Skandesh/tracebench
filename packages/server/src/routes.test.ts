@@ -213,12 +213,33 @@ describe('GET /api/sessions/:id/events', () => {
       method: 'GET',
       url: '/api/sessions/fix-sess-01/events',
     });
-    const body = res.json() as { events: Array<{ timestamp: string; event_type: string }> };
+    const body = res.json() as { events: Array<{ timestamp: string; event_type: string; raw: Record<string, unknown> }> };
     expect(body.events.length).toBeGreaterThan(0);
     for (let i = 1; i < body.events.length; i++) {
       // timestamps are monotonically non-decreasing
       expect(body.events[i]!.timestamp >= body.events[i - 1]!.timestamp).toBe(true);
     }
+    expect(body.events[0]!.raw._tracebench_raw).toBe('source_ref');
+  });
+
+  it('returns source-backed raw JSON for an event without re-parsing the whole session', async () => {
+    const eventsRes = await server.app.inject({
+      method: 'GET',
+      url: '/api/sessions/fix-sess-01/events',
+    });
+    const first = (eventsRes.json() as { events: Array<{ event_id: string }> }).events[0]!;
+    const rawRes = await server.app.inject({
+      method: 'GET',
+      url: `/api/sessions/fix-sess-01/events/${encodeURIComponent(first.event_id)}/raw`,
+    });
+    expect(rawRes.statusCode).toBe(200);
+    const body = rawRes.json() as {
+      raw: Record<string, unknown>;
+      provenance: { kind: string; available: boolean; line?: number };
+    };
+    expect(body.provenance).toMatchObject({ kind: 'source_ref', available: true });
+    expect(typeof body.provenance.line).toBe('number');
+    expect(body.raw.sessionId).toBe('fix-sess-01');
   });
 });
 
@@ -231,6 +252,40 @@ describe('GET /api/pricing', () => {
   });
 });
 
+describe('GET /api/storage', () => {
+  it('explains discovered, indexed, manifest, and payload storage', async () => {
+    const res = await server.app.inject({ method: 'GET', url: '/api/storage' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as {
+      discovery: {
+        total_sessions: number;
+        indexed_sessions: number;
+        manifest_sessions: number;
+        per_harness: Record<string, { discovered: number; indexed: number; states: Record<string, number> }>;
+      };
+      payload_bytes: { raw_json: number; total_json: number; external_payload_count: number };
+      largest_sources: unknown[];
+    };
+    expect(body.discovery.total_sessions).toBe(9);
+    expect(body.discovery.indexed_sessions).toBe(9);
+    expect(body.discovery.manifest_sessions).toBe(9);
+    expect(body.discovery.per_harness.claude_code?.states.hot).toBe(3);
+    expect(body.largest_sources.length).toBeGreaterThan(0);
+    expect(body.payload_bytes.total_json).toBeGreaterThan(0);
+  });
+});
+
+describe('GET /api/discovered-sessions', () => {
+  it('lists manifest rows separately from indexed session rows', async () => {
+    const res = await server.app.inject({ method: 'GET', url: '/api/discovered-sessions?harness=codex' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { sessions: Array<{ harness: string; index_state: string }> };
+    expect(body.sessions.length).toBe(3);
+    expect(body.sessions.every((s) => s.harness === 'codex')).toBe(true);
+    expect(body.sessions.every((s) => s.index_state === 'hot')).toBe(true);
+  });
+});
+
 describe('POST /api/reindex', () => {
   it('runs a re-index and returns counts', async () => {
     const res = await server.app.inject({ method: 'POST', url: '/api/reindex' });
@@ -239,16 +294,76 @@ describe('POST /api/reindex', () => {
       scanned: number;
       indexed: number;
       skipped: number;
-      per_harness: Record<string, { scanned: number; skipped: number; indexed: number }>;
+      deferred: number;
+      per_harness: Record<string, { scanned: number; skipped: number; indexed: number; deferred: number }>;
     };
     expect(body.scanned).toBe(9);
     // After the initial index, mtimes haven't changed → all skipped
     expect(body.skipped).toBe(9);
     expect(body.indexed).toBe(0);
-    expect(body.per_harness.claude_code).toEqual({ scanned: 3, indexed: 0, skipped: 3 });
-    expect(body.per_harness.codex).toEqual({ scanned: 3, indexed: 0, skipped: 3 });
-    expect(body.per_harness.cursor).toEqual({ scanned: 2, indexed: 0, skipped: 2 });
-    expect(body.per_harness.opencode).toEqual({ scanned: 1, indexed: 0, skipped: 1 });
+    expect(body.deferred).toBe(0);
+    expect(body.per_harness.claude_code).toEqual({ scanned: 3, indexed: 0, skipped: 3, deferred: 0 });
+    expect(body.per_harness.codex).toEqual({ scanned: 3, indexed: 0, skipped: 3, deferred: 0 });
+    expect(body.per_harness.cursor).toEqual({ scanned: 2, indexed: 0, skipped: 2, deferred: 0 });
+    expect(body.per_harness.opencode).toEqual({ scanned: 1, indexed: 0, skipped: 1, deferred: 0 });
+  });
+});
+
+describe('bounded startup freshness', () => {
+  it('indexes a bounded latest subset, exposes discovered rows, and backfills explicitly', async () => {
+    const boundedCcRoot = mkdtempSync(join(tmpdir(), 'tracebench-bounded-cc-'));
+    const ccProj = join(boundedCcRoot, '-fixtures');
+    mkdirSync(ccProj, { recursive: true });
+    for (const f of readdirSync(CC_FIXTURES)) {
+      if (!f.endsWith('.jsonl')) continue;
+      writeFileSync(join(ccProj, f), readFileSync(join(CC_FIXTURES, f)));
+    }
+    const empty = mkdtempSync(join(tmpdir(), 'tracebench-bounded-empty-'));
+    const bounded = await buildServer({
+      dbPath: ':memory:',
+      projectsRoot: boundedCcRoot,
+      codexRoot: join(empty, 'codex'),
+      cursorRoot: join(empty, 'cursor'),
+      opencodeRoot: join(empty, 'opencode'),
+      cursorUserDataDir: join(empty, 'cursor-user'),
+      maxSessionsPerHarness: 1,
+      verbose: false,
+    });
+    await bounded.app.ready();
+    try {
+      let res = await bounded.app.inject({ method: 'GET', url: '/api/sessions?harness=claude_code' });
+      expect(res.statusCode).toBe(200);
+      expect((res.json() as { sessions: unknown[] }).sessions.length).toBe(1);
+
+      res = await bounded.app.inject({ method: 'GET', url: '/api/discovered-sessions?harness=claude_code' });
+      const manifest = res.json() as { sessions: Array<{ session_id: string; index_state: string }> };
+      expect(manifest.sessions.length).toBe(3);
+      expect(manifest.sessions.filter((s) => s.index_state === 'hot')).toHaveLength(1);
+      expect(manifest.sessions.filter((s) => s.index_state === 'discovered')).toHaveLength(2);
+
+      const deferred = manifest.sessions.find((s) => s.index_state === 'discovered')!;
+      res = await bounded.app.inject({
+        method: 'POST',
+        url: `/api/sessions/${encodeURIComponent(deferred.session_id)}/index`,
+      });
+      expect(res.statusCode).toBe(200);
+      expect((res.json() as { indexed: number }).indexed).toBe(1);
+
+      res = await bounded.app.inject({ method: 'GET', url: '/api/sessions?harness=claude_code' });
+      expect((res.json() as { sessions: unknown[] }).sessions.length).toBe(2);
+
+      res = await bounded.app.inject({
+        method: 'POST',
+        url: '/api/reindex?harness=claude_code&indexAll=1&full=1',
+      });
+      expect(res.statusCode).toBe(200);
+      expect((res.json() as { indexed: number }).indexed).toBe(3);
+
+      res = await bounded.app.inject({ method: 'GET', url: '/api/sessions?harness=claude_code' });
+      expect((res.json() as { sessions: unknown[] }).sessions.length).toBe(3);
+    } finally {
+      await bounded.app.close();
+    }
   });
 });
 
@@ -257,5 +372,55 @@ describe('non-API routes', () => {
     const res = await server.app.inject({ method: 'GET', url: '/' });
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toMatch(/html/);
+  });
+});
+
+describe('GET /api/search', () => {
+  type SearchBody = {
+    results: Array<{ session: { session_id: string; harness: string; title: string | null }; score: number; matches: Array<{ snippet: string }> }>;
+    total: number;
+    semanticAvailable: boolean;
+  };
+
+  it('returns an empty result for an empty query (not 500)', async () => {
+    const res = await server.app.inject({ method: 'GET', url: '/api/search' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ results: [], total: 0, semanticAvailable: false });
+  });
+
+  it('finds a session by content inside its events (README read)', async () => {
+    const res = await server.app.inject({ method: 'GET', url: '/api/search?q=README' });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as SearchBody;
+    expect(body.results.length).toBeGreaterThanOrEqual(1);
+    expect(body.results.some((r) => r.session.harness === 'claude_code')).toBe(true);
+    expect(Array.isArray(body.results[0].matches)).toBe(true);
+  });
+
+  it('does not 500 on FTS operator characters', async () => {
+    const res = await server.app.inject({
+      method: 'GET',
+      url: '/api/search?q=' + encodeURIComponent('a + b (c) "x'),
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('restricts results to the requested harness', async () => {
+    const res = await server.app.inject({
+      method: 'GET',
+      url: '/api/search?q=' + encodeURIComponent('the') + '&harness=codex',
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as SearchBody;
+    expect(body.results.every((r) => r.session.harness === 'codex')).toBe(true);
+  });
+
+  it('paginates with limit', async () => {
+    const res = await server.app.inject({
+      method: 'GET',
+      url: '/api/search?q=' + encodeURIComponent('the') + '&limit=1',
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as SearchBody).results.length).toBeLessThanOrEqual(1);
   });
 });

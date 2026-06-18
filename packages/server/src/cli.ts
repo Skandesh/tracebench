@@ -8,12 +8,24 @@
 //   --db-path <path>    override SQLite location
 //   --no-open           don't auto-open the browser
 //   --no-index          skip startup index
+//   --index-all         opt into full historical indexing
+//   doctor --storage    print a non-mutating storage diagnostic report
 //   --verbose / -v      verbose logging
 
 import { spawn } from 'node:child_process';
 import { platform } from 'node:os';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
+import { SqliteDatabase, type Harness, type TracebenchDb } from '@tracebench/core';
 import { buildServer } from './server.js';
+import { defaultDbPath } from './paths.js';
+import {
+  buildStorageReport,
+  parseByteSize,
+  parseSinceMs,
+  renderStorageReport,
+} from './storage.js';
 
 interface CliArgs {
   port: number;
@@ -28,6 +40,15 @@ interface CliArgs {
   index: boolean;
   verbose: boolean;
   help: boolean;
+  doctorStorage: boolean;
+  indexAll: boolean;
+  maxSessionsPerHarness?: number;
+  maxSourceBytesPerHarness?: number;
+  sinceMs?: number;
+  only?: Harness[];
+  rawMode: 'full' | 'reference';
+  enableVectors: boolean;
+  maxVectorChunks?: number;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -38,6 +59,10 @@ function parseArgs(argv: string[]): CliArgs {
     index: true,
     verbose: false,
     help: false,
+    doctorStorage: false,
+    indexAll: false,
+    rawMode: 'reference',
+    enableVectors: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i]!;
@@ -56,8 +81,27 @@ function parseArgs(argv: string[]): CliArgs {
       case '--opencode-dir': a.opencodeDir = next(); break;
       case '--cursor-user-data-dir': a.cursorUserDataDir = next(); break;
       case '--db-path': a.dbPath = next(); break;
+      case '--index-all': a.indexAll = true; break;
+      case '--max-startup-sessions': a.maxSessionsPerHarness = parseNonNegativeInt(next(), flag); break;
+      case '--max-startup-bytes':
+      case '--max-source-bytes': a.maxSourceBytesPerHarness = parseByteSize(next()).bytes; break;
+      case '--since': a.sinceMs = parseSinceMs(next()); break;
+      case '--harness': a.only = parseHarnesses(next()); break;
+      case '--preserve-raw': a.rawMode = parseRawMode(next()); break;
+      case '--embeddings': a.enableVectors = true; break;
+      case '--max-vector-chunks': a.maxVectorChunks = parseNonNegativeInt(next(), flag); break;
       case '--no-open': a.open = false; break;
       case '--no-index': a.index = false; break;
+      case 'doctor': {
+        if (argv[i + 1] === '--storage') {
+          i++;
+          a.doctorStorage = true;
+        } else {
+          process.stderr.write(`unknown doctor command: ${argv[i + 1] ?? ''}\n`);
+          a.help = true;
+        }
+        break;
+      }
       case '--verbose':
       case '-v': a.verbose = true; break;
       case '--help':
@@ -87,6 +131,22 @@ Usage: tracebench [flags]
   --opencode-dir <path>      OpenCode data dir (default ~/.local/share/opencode)
   --cursor-user-data-dir <path>  Cursor User dir for Composer DB (default OS-specific)
   --db-path <path>    SQLite file (default ~/.tracebench/tracebench.db)
+  --index-all         index all discovered history on startup (escape hatch)
+  --max-startup-sessions <n>
+                      cap startup indexing per harness (default 200)
+  --max-startup-bytes <size>
+                      cap startup source bytes per harness (default 1GB)
+  --since <duration|date>
+                      index only sessions newer than duration/date (e.g. 30d)
+  --harness <names>   only index selected harnesses (comma-separated)
+  --preserve-raw <reference|full>
+                      raw storage mode; reference is compact default
+  doctor --storage    print non-mutating storage diagnostics and exit
+  --embeddings        enable local semantic search (downloads a ~23MB model;
+                      adds the ONNX runtime; off by default — lexical search
+                      always works without it)
+  --max-vector-chunks <n>
+                      cap stored embeddings; above this, search stays lexical
   --no-open           don't auto-open the browser
   --no-index          skip startup index pass
   -v, --verbose       verbose logging
@@ -94,6 +154,21 @@ Usage: tracebench [flags]
 
 Once running, the UI is at http://localhost:<port>
 `);
+}
+
+function parseHarnesses(value: string): Harness[] {
+  return value.split(',').map((h) => h.trim()).filter(Boolean) as Harness[];
+}
+
+function parseNonNegativeInt(value: string, flag: string): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) throw new Error(`${flag} requires a non-negative integer`);
+  return Math.floor(n);
+}
+
+function parseRawMode(value: string): 'full' | 'reference' {
+  if (value === 'full' || value === 'reference') return value;
+  throw new Error(`--preserve-raw must be "reference" or "full"`);
 }
 
 const MAX_PORT_ATTEMPTS = 100;
@@ -141,6 +216,37 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (args.doctorStorage) {
+    const dbPath = args.dbPath ?? defaultDbPath();
+    let db: TracebenchDb | undefined;
+    if (dbPath !== ':memory:' && existsSync(dbPath)) {
+      const raw = new SqliteDatabase(dbPath, {
+        readonly: true,
+        fileMustExist: true,
+      });
+      db = { raw, ftsAvailable: false, vectorsAvailable: false, close: () => raw.close() };
+    }
+    try {
+      const report = buildStorageReport({
+        db,
+        dbPath,
+        roots: {
+          claude_code: args.dir,
+          codex: args.codexDir,
+          cursor: args.cursorDir,
+          opencode: args.opencodeDir,
+        },
+        cursorGlobalDbPath: args.cursorUserDataDir
+          ? join(args.cursorUserDataDir, 'globalStorage', 'state.vscdb')
+          : undefined,
+      });
+      process.stdout.write(renderStorageReport(report) + '\n');
+    } finally {
+      db?.close();
+    }
+    return;
+  }
+
   const { app } = await buildServer({
     dbPath: args.dbPath,
     projectsRoot: args.dir,
@@ -149,7 +255,15 @@ async function main(): Promise<void> {
     opencodeRoot: args.opencodeDir,
     cursorUserDataDir: args.cursorUserDataDir,
     noIndex: !args.index,
+    indexAll: args.indexAll,
+    maxSessionsPerHarness: args.maxSessionsPerHarness,
+    maxSourceBytesPerHarness: args.maxSourceBytesPerHarness,
+    sinceMs: args.sinceMs,
+    only: args.only,
+    rawMode: args.rawMode,
     verbose: args.verbose,
+    enableVectors: args.enableVectors,
+    maxVectorChunks: args.maxVectorChunks,
   });
 
   let port: number;

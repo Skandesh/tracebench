@@ -6,12 +6,22 @@ import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openDb } from '@tracebench/core';
+import {
+  openDb,
+  backfillSearchChunks,
+  createEmbedder,
+  runEmbedDrainBatch,
+  setVecMeta,
+  CHUNKER_VERSION,
+} from '@tracebench/core';
 import { defaultCursorUserDataDir } from '@tracebench/adapter-cursor';
-import type { TracebenchDb } from '@tracebench/core';
+import type { Harness, TracebenchDb } from '@tracebench/core';
 import { defaultDbPath } from './paths.js';
-import { registerRoutes } from './routes.js';
+import { registerRoutes, type RouteContext } from './routes.js';
 import { indexSessions } from './indexer.js';
+
+const DEFAULT_STARTUP_MAX_SESSIONS_PER_HARNESS = 200;
+const DEFAULT_STARTUP_MAX_SOURCE_BYTES_PER_HARNESS = 1024 ** 3;
 
 export interface ServerOptions {
   /** SQLite path. Defaults to ~/.tracebench/tracebench.db */
@@ -28,6 +38,17 @@ export interface ServerOptions {
   cursorUserDataDir?: string;
   /** Skip the startup index pass. */
   noIndex?: boolean;
+  /** Preserve current startup freshness while bounding first-run/deep materialization. */
+  indexAll?: boolean;
+  maxSessionsPerHarness?: number;
+  maxSourceBytesPerHarness?: number;
+  sinceMs?: number;
+  only?: Harness[];
+  rawMode?: 'full' | 'reference';
+  /** Opt in to the semantic leg (load sqlite-vec + embeddings). Off by default. */
+  enableVectors?: boolean;
+  /** Above this many stored vectors, semantic search auto-degrades to lexical. */
+  maxVectorChunks?: number;
   /** Verbose stderr logging. */
   verbose?: boolean;
 }
@@ -55,7 +76,8 @@ function findUiBuildDir(): string | null {
 }
 
 export async function buildServer(opts: ServerOptions = {}): Promise<BuiltServer> {
-  const db = openDb({ path: opts.dbPath ?? defaultDbPath() });
+  const dbPath = opts.dbPath ?? defaultDbPath();
+  const db = openDb({ path: dbPath, enableVectors: opts.enableVectors });
   const app = Fastify({
     logger: opts.verbose
       ? { level: 'info' }
@@ -72,7 +94,15 @@ export async function buildServer(opts: ServerOptions = {}): Promise<BuiltServer
   const cursorUserDir = opts.cursorUserDataDir ?? defaultCursorUserDataDir();
   const cursorGlobalDbPath = join(cursorUserDir, 'globalStorage', 'state.vscdb');
 
-  await registerRoutes(app, { db, roots, cursorGlobalDbPath });
+  const ctx: RouteContext = {
+    db,
+    dbPath,
+    roots,
+    cursorGlobalDbPath,
+    embedder: null,
+    maxVectorChunks: opts.maxVectorChunks,
+  };
+  await registerRoutes(app, ctx);
 
   // Static UI: if a built UI exists, serve it. Otherwise a friendly fallback
   // page that explains how to start the dev UI.
@@ -101,6 +131,15 @@ export async function buildServer(opts: ServerOptions = {}): Promise<BuiltServer
         opencode: opts.opencodeRoot,
       },
       cursorGlobalDbPath,
+      only: opts.only,
+      sinceMs: opts.sinceMs,
+      maxSessionsPerHarness: opts.indexAll
+        ? undefined
+        : (opts.maxSessionsPerHarness ?? DEFAULT_STARTUP_MAX_SESSIONS_PER_HARNESS),
+      maxSourceBytesPerHarness: opts.indexAll
+        ? undefined
+        : (opts.maxSourceBytesPerHarness ?? DEFAULT_STARTUP_MAX_SOURCE_BYTES_PER_HARNESS),
+      rawMode: opts.rawMode ?? 'reference',
       verbose: opts.verbose,
     });
     if (opts.verbose) {
@@ -108,12 +147,89 @@ export async function buildServer(opts: ServerOptions = {}): Promise<BuiltServer
         .map(([h, s]) => `${h}=${s.indexed}/${s.scanned}`)
         .join(' ');
       process.stderr.write(
-        `[tracebench] indexed ${result.indexed} / ${result.scanned} sessions (${perHarness}; ${result.skipped} unchanged, ${result.errors.length} errors) in ${result.duration_ms}ms\n`,
+        `[tracebench] indexed ${result.indexed} / ${result.scanned} sessions (${perHarness}; ${result.skipped} unchanged, ${result.deferred} deferred, ${result.errors.length} errors) in ${result.duration_ms}ms\n`,
       );
     }
+    // Search background work — strictly AFTER indexing resolves, fire-and-forget
+    // so it never blocks readiness: lexical backfill first (brings old sessions
+    // into search), then the embedding drain when vectors are enabled.
+    void runSearchBackground(ctx, opts.verbose);
   }
 
   return { app, db };
+}
+
+/**
+ * Background pipeline: drain the lexical backfill to completion, then (when the
+ * semantic leg is enabled) acquire the local embedder and drain pending
+ * embeddings. Bounded batches with WAL checkpoints + yields keep foreground
+ * requests responsive (RISK11/S1). All best-effort — failures degrade to
+ * lexical-only and never crash the server.
+ */
+async function runSearchBackground(ctx: RouteContext, verbose?: boolean): Promise<void> {
+  const { db } = ctx;
+  const maxVectorChunks = ctx.maxVectorChunks;
+  const log = (msg: string) => verbose && process.stderr.write(`[tracebench] ${msg}\n`);
+  // 1) Lexical backfill.
+  try {
+    let total = 0;
+    for (;;) {
+      const { processed, remaining } = backfillSearchChunks(db, { limit: 25 });
+      total += processed;
+      if (processed > 0) {
+        try {
+          db.raw.pragma('wal_checkpoint(TRUNCATE)');
+        } catch {
+          /* best-effort */
+        }
+      }
+      if (processed === 0 || remaining === 0) break;
+      await new Promise((r) => setImmediate(r));
+    }
+    if (total > 0) log(`search backfill: indexed ${total} session(s)`);
+  } catch (e) {
+    log(`search backfill error: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // 2) Embedding drain (only when the semantic leg loaded).
+  if (!db.vectorsAvailable) return;
+  try {
+    const embedder = await createEmbedder();
+    if (!embedder) {
+      log('embeddings: model unavailable — semantic search disabled (lexical-only)');
+      return;
+    }
+    // Publish to the route context so /api/search can embed queries (the
+    // semantic leg goes live as soon as some vectors exist, even mid-drain).
+    ctx.embedder = embedder;
+    setVecMeta(db, 'model_id', embedder.modelId);
+    setVecMeta(db, 'dtype', embedder.dtype);
+    setVecMeta(db, 'chunker_version', String(CHUNKER_VERSION));
+    let total = 0;
+    for (;;) {
+      const { processed, remaining, budgetReached } = await runEmbedDrainBatch(db, embedder.embed, {
+        limit: 32,
+        maxVectorChunks,
+      });
+      total += processed;
+      if (processed > 0) {
+        try {
+          db.raw.pragma('wal_checkpoint(TRUNCATE)');
+        } catch {
+          /* best-effort */
+        }
+      }
+      if (budgetReached) {
+        log('embeddings: vector budget reached — remaining chunks stay lexical-only');
+        break;
+      }
+      if (processed === 0 || remaining === 0) break;
+      await new Promise((r) => setImmediate(r));
+    }
+    if (total > 0) log(`embeddings: embedded ${total} chunk(s)`);
+  } catch (e) {
+    log(`embeddings error: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 const LANDING_HTML = `<!doctype html>
